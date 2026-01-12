@@ -1,0 +1,21 @@
+{
+  "include": [
+    "."
+  ],
+  "ignore": [
+    "typings/"
+  ],
+  "exclude": [
+    ".github",
+    ".venv",
+    "typings/"
+  ],
+
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": false,
+  "useLibraryCodeForTypes": false,
+
+  "typeCheckingMode": "standard",
+
+  "venv": ".venv"
+}

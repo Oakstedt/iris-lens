@@ -1,0 +1,46 @@
+# Set the maximum line length to 80.
+line-length = 80
+
+extend-exclude = [
+    "*.pyi",
+]
+
+[lint.flake8-annotations]
+suppress-dummy-args = true
+
+[lint]
+# Add the all rules. By default, Ruff omits rules that overlap with the use of
+# a formatter, like Black, but we can override this behavior by explicitly
+# adding the rule.
+extend-select = ["ALL"]
+
+# For more information on each rule, see https://docs.astral.sh/ruff/rules/ and
+# use the search box
+ignore = [
+    "UP006",
+    "T201",
+    "TD003",
+    "FA102",
+    "D100",
+    "D104",
+    "D106",
+    "D200",
+    "D203",
+    "D205",
+    "D212",
+    "D300",
+    "D401",
+    "D404",
+    "PGH004",
+    "FIX002",
+    "SIM201",
+    "ANN002",
+    "ANN003",
+    "N802",
+    "N803",
+    "N806",
+    "COM812",
+    "FBT001",
+    "FBT002",
+    "FBT003",
+]

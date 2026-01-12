@@ -1,0 +1,14 @@
+{
+    "hcp" : {
+        "endpoint" : "",
+        "aws_access_key_id" : "",
+        "aws_secret_access_key" : ""
+    },
+    "hci" : {
+        "username" : "",
+        "password" : "",
+        "address" : "",
+        "auth_port" : "",
+        "api_port" : ""
+    }
+}
