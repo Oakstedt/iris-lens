@@ -1,81 +1,146 @@
+# main.py
 import sys
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QComboBox, QTableWidget, QTableWidgetItem, 
-                             QPushButton, QLabel, QHeaderView, QStatusBar, QFileDialog)
-from PyQt6.QtCore import Qt
+                             QHBoxLayout, QComboBox, QPushButton, QLabel, 
+                             QStatusBar, QFileDialog, QLineEdit)
 
-# Ensure the app can find the bundled NGPIris modules in /src
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# Import our modular classes
+from config_manager import ConfigManager
+from hcp_client import HCPClient
+from ui_components import FileBrowserTable
 
-# Attempt to import the HCP logic from the bundled source
-try:
-    # Adjusting import based on standard NGPIris structure
-    from hcp import HCPHandler 
-except ImportError:
-    HCPHandler = None
-
-class IrisLensApp(QMainWindow):
+class MainWindow(QMainWindow):
+    """ The main application controller. Connects UI, Logic, and Config. """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NGP-Iris Lens")
-        self.setMinimumSize(1000, 600)
+        self.setMinimumSize(1100, 700)
+        
+        # Initialize Core Logic modules
+        self.config = ConfigManager()
+        self.client = HCPClient()
 
-        # UI Layout
+        # Build UI
+        self._init_ui()
+        self._init_menu()
+        
+        # Initial State Check
+        self.refresh_ui_state()
+
+    def _init_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
 
-        # Top Bar: Bucket Selection
+        # A. Warning Label
+        self.warning_label = QLabel("⚠️ No Credentials Linked! Go to File > Link Credentials")
+        self.warning_label.setStyleSheet("color: red; font-weight: bold; background: #ffe6e6; padding: 10px; border-radius: 5px;")
+        self.layout.addWidget(self.warning_label)
+
+        # B. Top Navigation Bar
         self.nav_bar = QHBoxLayout()
-        self.nav_bar.addWidget(QLabel("HCP Bucket:"))
-        self.bucket_dropdown = QComboBox()
-        self.nav_bar.addWidget(self.bucket_dropdown, 1)
+        self.bucket_combo = QComboBox()
+        self.btn_refresh = QPushButton("Refresh List")
+        self.btn_read = QPushButton("Read Bucket")
         
-        self.refresh_btn = QPushButton("Refresh List")
-        self.refresh_btn.clicked.connect(self.load_hcp_data)
-        self.nav_bar.addWidget(self.refresh_btn)
+        self.nav_bar.addWidget(QLabel("HCP Bucket:"))
+        self.nav_bar.addWidget(self.bucket_combo, 1)
+        self.nav_bar.addWidget(self.btn_read)
+        self.nav_bar.addWidget(self.btn_refresh)
+        
+        self.btn_refresh.clicked.connect(self.on_refresh_buckets)
+        self.btn_read.clicked.connect(self.on_read_bucket)
+        
         self.layout.addLayout(self.nav_bar)
 
-        # Middle: File Table
-        self.file_table = QTableWidget()
-        self.file_table.setColumnCount(4)
-        self.file_table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Last Modified"])
-        self.file_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.layout.addWidget(self.file_table)
+        # C. Search Bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Filter displayed files...")
+        self.search_input.textChanged.connect(self.on_search_changed)
+        self.layout.addWidget(self.search_input)
 
-        # Bottom: Actions
-        self.btn_layout = QHBoxLayout()
-        self.upload_btn = QPushButton("Upload File...")
-        self.upload_btn.clicked.connect(self.open_upload_dialog)
-        self.download_btn = QPushButton("Download Selected")
-        self.download_btn.clicked.connect(self.open_download_dialog)
+        # D. File Table (Imported Component)
+        self.file_browser = FileBrowserTable()
+        self.layout.addWidget(self.file_browser)
+
+        # E. Action Buttons
+        self.action_bar = QHBoxLayout()
+        self.btn_upload = QPushButton("Upload File...")
+        self.btn_download = QPushButton("Download Selected")
         
-        self.btn_layout.addWidget(self.upload_btn)
-        self.btn_layout.addWidget(self.download_btn)
-        self.layout.addLayout(self.btn_layout)
-
+        self.btn_upload.clicked.connect(self.on_upload)
+        self.btn_download.clicked.connect(self.on_download)
+        
+        self.action_bar.addWidget(self.btn_upload)
+        self.action_bar.addWidget(self.btn_download)
+        self.layout.addLayout(self.action_bar)
+        
+        # F. Status Bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Ready")
 
-    def load_hcp_data(self):
-        self.status.showMessage("Querying Hitachi Content Platform...")
-        # Future connection logic goes here
+    def _init_menu(self):
+        menu = self.menuBar().addMenu("File")
+        link_action = menu.addAction("Link Credentials File...")
+        link_action.triggered.connect(self.on_link_credentials)
+        exit_action = menu.addAction("Exit")
+        exit_action.triggered.connect(self.close)
 
-    def open_upload_dialog(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select File to Upload", "", "All Files (*)")
-        if file_path:
-            self.status.showMessage(f"Selected: {os.path.basename(file_path)}")
+    # --- EVENT HANDLERS ---
 
-    def open_download_dialog(self):
-        save_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
-        if save_dir:
-            self.status.showMessage(f"Target: {save_dir}")
+    def refresh_ui_state(self):
+        has_creds = self.config.has_credentials()
+        self.warning_label.setVisible(not has_creds)
+        self.bucket_combo.setEnabled(has_creds)
+        self.btn_read.setEnabled(has_creds)
+        
+        if has_creds and self.bucket_combo.count() == 0:
+            self.on_refresh_buckets()
+
+    def on_link_credentials(self):
+        fpath, _ = QFileDialog.getOpenFileName(self, "Select Credentials", "", "All Files (*)")
+        if fpath:
+            self.config.set("credentials_path", fpath)
+            self.status.showMessage(f"Linked: {fpath}", 3000)
+            self.refresh_ui_state()
+
+    def on_refresh_buckets(self):
+        self.status.showMessage("Refreshing buckets...")
+        buckets = self.client.list_buckets()
+        self.bucket_combo.clear()
+        self.bucket_combo.addItems(buckets)
+        self.status.showMessage("Ready", 2000)
+
+    def on_read_bucket(self):
+        current_bucket = self.bucket_combo.currentText()
+        if not current_bucket: return
+        
+        self.status.showMessage(f"Reading {current_bucket}...")
+        files = self.client.fetch_files(current_bucket)
+        self.file_browser.populate_files(files)
+        self.status.showMessage(f"Loaded {len(files)} files.", 3000)
+
+    def on_search_changed(self, text):
+        self.file_browser.filter_rows(text)
+
+    def on_upload(self):
+        fpath, _ = QFileDialog.getOpenFileName(self, "Upload File")
+        if fpath:
+            self.status.showMessage(f"Uploading {os.path.basename(fpath)}...")
+
+    def on_download(self):
+        selected = self.file_browser.get_selected_filenames()
+        if not selected:
+            self.status.showMessage("No files selected.", 3000)
+            return
+        dest_dir = QFileDialog.getExistingDirectory(self, "Select Destination")
+        if dest_dir:
+            self.status.showMessage(f"Downloading {len(selected)} files to {dest_dir}...")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle("Fusion") 
-    window = IrisLensApp()
+    app.setStyle("Fusion")
+    window = MainWindow()
     window.show()
     sys.exit(app.exec())
