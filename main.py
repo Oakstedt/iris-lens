@@ -1,4 +1,3 @@
-# main.py
 import sys
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
@@ -25,7 +24,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._init_menu()
         
-        # Initial State Check
+        # Initial State Check (Safe Startup)
         self.refresh_ui_state()
 
     def _init_ui(self):
@@ -90,27 +89,59 @@ class MainWindow(QMainWindow):
     # --- EVENT HANDLERS ---
 
     def refresh_ui_state(self):
+        """ Checks credentials and updates UI. Does NOT crash on failure. """
         has_creds = self.config.has_credentials()
         self.warning_label.setVisible(not has_creds)
-        self.bucket_combo.setEnabled(has_creds)
-        self.btn_read.setEnabled(has_creds)
         
-        if has_creds and self.bucket_combo.count() == 0:
-            self.on_refresh_buckets()
+        if has_creds:
+            # Try to connect if not already connected
+            if not self.client.connected:
+                path = self.config.get("credentials_path")
+                try:
+                    self.client.connect(path)
+                except Exception as e:
+                    print(f"Startup Connection Error: {e}")
+                    self.warning_label.setText(f"⚠️ Connection Failed: {str(e)}")
+                    self.warning_label.setVisible(True)
+                    return
+
+            # Enable controls
+            self.bucket_combo.setEnabled(True)
+            self.btn_read.setEnabled(True)
+            
+            # Safely refresh buckets
+            if self.bucket_combo.count() == 0:
+                try:
+                    self.on_refresh_buckets()
+                except Exception as e:
+                    print(f"Bucket refresh failed: {e}")
+        else:
+            self.bucket_combo.setEnabled(False)
+            self.btn_read.setEnabled(False)
 
     def on_link_credentials(self):
-        fpath, _ = QFileDialog.getOpenFileName(self, "Select Credentials", "", "All Files (*)")
+        fpath, _ = QFileDialog.getOpenFileName(self, "Select Credentials", "", "JSON (*.json);;All Files (*)")
         if fpath:
             self.config.set("credentials_path", fpath)
-            self.status.showMessage(f"Linked: {fpath}", 3000)
-            self.refresh_ui_state()
+            try:
+                self.client.connect(fpath)
+                self.status.showMessage(f"Connected: {os.path.basename(fpath)}", 3000)
+                self.refresh_ui_state()
+            except Exception as e:
+                self.status.showMessage(f"Connection Failed: {str(e)}", 5000)
+                self.warning_label.setText(f"⚠️ Error: {str(e)}")
+                self.warning_label.setVisible(True)
 
     def on_refresh_buckets(self):
         self.status.showMessage("Refreshing buckets...")
         buckets = self.client.list_buckets()
         self.bucket_combo.clear()
-        self.bucket_combo.addItems(buckets)
-        self.status.showMessage("Ready", 2000)
+        
+        if buckets:
+            self.bucket_combo.addItems(buckets)
+            self.status.showMessage("Ready", 2000)
+        else:
+            self.status.showMessage("No buckets found or access denied.", 3000)
 
     def on_read_bucket(self):
         current_bucket = self.bucket_combo.currentText()
