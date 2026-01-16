@@ -3,7 +3,7 @@ import os
 import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QComboBox, QPushButton, QLabel, 
-                             QStatusBar, QProgressBar, QFileDialog, QLineEdit)
+                             QStatusBar, QProgressBar, QFileDialog, QInputDialog, QLineEdit)
 
 # Import our modular classes
 from config_manager import ConfigManager
@@ -163,9 +163,64 @@ class MainWindow(QMainWindow):
         self.file_browser.filter_rows(text)
 
     def on_upload(self):
-        fpath, _ = QFileDialog.getOpenFileName(self, "Upload File")
-        if fpath:
-            self.status.showMessage(f"Uploading {os.path.basename(fpath)}...")
+        # 1. Check Bucket
+        current_bucket = self.bucket_combo.currentText()
+        if not current_bucket:
+            self.status.showMessage("No bucket selected.", 3000)
+            return
+
+        # 2. Select Local Files
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Files to Upload")
+        if not files:
+            return # User cancelled selection
+
+        # 3. Ask for Remote Destination (Optional)
+        # Defaults to empty string (Root of bucket)
+        remote_folder, ok = QInputDialog.getText(
+            self, 
+            "Destination Folder", 
+            "Enter remote folder path (optional):\n(e.g. 'forskning/gisaid/')",
+        )
+        if not ok:
+            return # User cancelled dialog
+        
+        remote_folder = remote_folder.strip()
+
+        # 4. Upload Loop
+        total_files = len(files)
+        self.status.showMessage(f"Starting upload of {total_files} files...")
+        
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, total_files)
+        self.progress_bar.setValue(0)
+        
+        success_count = 0
+        
+        for i, file_path in enumerate(files):
+            fname = os.path.basename(file_path)
+            self.status.showMessage(f"Uploading {i+1}/{total_files}: {fname}...")
+            QApplication.processEvents()
+            
+            # Call our new client method
+            if self.client.upload_file(current_bucket, file_path, remote_folder):
+                success_count += 1
+            
+            self.progress_bar.setValue(i + 1)
+            
+            # Throttle slightly to be safe
+            import time
+            time.sleep(0.5)
+
+        # 5. Cleanup & Refresh
+        self.progress_bar.setVisible(False)
+        self.status.showMessage(f"✅ Upload Complete. {success_count}/{total_files} files uploaded.", 5000)
+        
+        # FIX: Call the function that handles "Read Bucket"
+        # (Assuming it is named on_read_bucket based on standard naming)
+        if hasattr(self, 'on_read_bucket'):
+            self.on_read_bucket()
+        else:
+            print("⚠️ Auto-refresh skipped: Could not find 'on_read_bucket' method.")
 
     def on_download(self):
         # 1. Get Keys

@@ -137,3 +137,57 @@ class HCPClient:
         except Exception as e:
             print(f"❌ Download failed for {file_key}: {e}")
             return False
+        
+    def upload_file(self, bucket_name, local_file_path, remote_folder=""):
+        """
+        Uploads a single file using a fresh connection and the underlying s3_client.
+        Mimics the logic from your 'upload_file_single_part_standalone' script.
+        """
+        if not self.credentials_path:
+            print("❌ No credentials path saved. Cannot start fresh connection.")
+            return False
+
+        try:
+            # 1. Fresh Connection (The Script Strategy)
+            temp_handler = HCPHandler(self.credentials_path)
+            temp_handler.mount_bucket(bucket_name)
+
+            # 2. Access the Raw Boto3 Client
+            # Your script uses .s3_client, so we look for that specifically.
+            s3_client = getattr(temp_handler, 's3_client', None)
+            
+            # Fallback: Sometimes wrappers name it 'client' or 's3'
+            if not s3_client:
+                 s3_client = getattr(temp_handler, 'client', None) or getattr(temp_handler, 's3', None)
+
+            if not s3_client:
+                raise AttributeError("Could not access underlying S3 client from HCPHandler.")
+
+            # 3. Prepare Key (Remote Path)
+            filename = os.path.basename(local_file_path)
+            
+            # Ensure remote_folder has a trailing slash if it's not empty
+            if remote_folder and not remote_folder.endswith('/'):
+                remote_folder += '/'
+            
+            # If remote_folder is just "/", treat it as empty to avoid "//file.txt"
+            if remote_folder == "/":
+                remote_folder = ""
+
+            object_key = f"{remote_folder}{filename}"
+
+            print(f"⬆ Uploading: {local_file_path} -> {bucket_name}/{object_key}")
+
+            # 4. Execute Upload (put_object)
+            with open(local_file_path, 'rb') as data:
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=object_key,
+                    Body=data
+                )
+            
+            return True
+
+        except Exception as e:
+            print(f"❌ Upload failed for {local_file_path}: {e}")
+            return False
