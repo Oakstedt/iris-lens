@@ -40,27 +40,36 @@ class FileBrowserTable(QTableWidget):
             if not self.isRowHidden(row):
                 self.item(row, 0).setCheckState(new_state)
 
-    def populate_files(self, file_data):
-        """ Clears table and fills it with new data. """
+    def populate_files(self, files):
+        """ 
+        Expects a list of tuples: (display_name, size, type, date, raw_key) 
+        """
         self.setRowCount(0)
-        self.setSortingEnabled(False) 
-        
-        for row_idx, (name, size, ftype, date) in enumerate(file_data):
+        for row_idx, file_data in enumerate(files):
+            # Unpack the 5 items (use a default for key if your list is mixed)
+            if len(file_data) == 5:
+                name, size, ftype, date, raw_key = file_data
+            else:
+                # Fallback for old 4-item tuples
+                name, size, ftype, date = file_data
+                raw_key = name
+
             self.insertRow(row_idx)
             
-            # Checkbox Item
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk.setCheckState(Qt.CheckState.Unchecked)
-            self.setItem(row_idx, 0, chk)
+            # --- COLUMN 0: Checkbox + Name + HIDDEN KEY ---
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            name_item.setCheckState(Qt.CheckState.Unchecked)
             
-            # Data Items
-            self.setItem(row_idx, 1, QTableWidgetItem(name))
-            self.setItem(row_idx, 2, QTableWidgetItem(size))
-            self.setItem(row_idx, 3, QTableWidgetItem(ftype))
-            self.setItem(row_idx, 4, QTableWidgetItem(date))
+            # CRITICAL: Store the raw_key hidden in this item
+            name_item.setData(Qt.ItemDataRole.UserRole, raw_key)
             
-        self.setSortingEnabled(True)
+            self.setItem(row_idx, 0, name_item)
+            # ----------------------------------------------
+
+            self.setItem(row_idx, 1, QTableWidgetItem(size))
+            self.setItem(row_idx, 2, QTableWidgetItem(ftype))
+            self.setItem(row_idx, 3, QTableWidgetItem(date))
 
     def filter_rows(self, query):
         """ Hides rows that don't match the query. """
@@ -70,9 +79,13 @@ class FileBrowserTable(QTableWidget):
             is_visible = query in item.text().lower()
             self.setRowHidden(row, not is_visible)
 
-    def get_selected_filenames(self):
-        selected = []
+    def get_selected_file_keys(self):
+        """ Returns the hidden RAW KEYS of selected rows, not the display text. """
+        selected_keys = []
         for row in range(self.rowCount()):
-            if self.item(row, 0).checkState() == Qt.CheckState.Checked:
-                selected.append(self.item(row, 1).text())
-        return selected
+            item = self.item(row, 0)
+            if item.checkState() == Qt.CheckState.Checked:
+                # Retrieve the hidden raw key
+                raw_key = item.data(Qt.ItemDataRole.UserRole)
+                selected_keys.append(raw_key)
+        return selected_keys

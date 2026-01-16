@@ -1,8 +1,9 @@
 import sys
 import os
+import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QComboBox, QPushButton, QLabel, 
-                             QStatusBar, QFileDialog, QLineEdit)
+                             QStatusBar, QProgressBar, QFileDialog, QLineEdit)
 
 # Import our modular classes
 from config_manager import ConfigManager
@@ -78,6 +79,12 @@ class MainWindow(QMainWindow):
         # F. Status Bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+
+        # G. Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(200) # Keep it small
+        self.progress_bar.setVisible(False)    # Hide initially
+        self.status.addPermanentWidget(self.progress_bar)
 
     def _init_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -161,13 +168,49 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Uploading {os.path.basename(fpath)}...")
 
     def on_download(self):
-        selected = self.file_browser.get_selected_filenames()
-        if not selected:
+        # 1. Get Keys
+        selected_keys = self.file_browser.get_selected_file_keys()
+        if not selected_keys:
             self.status.showMessage("No files selected.", 3000)
             return
-        dest_dir = QFileDialog.getExistingDirectory(self, "Select Destination")
-        if dest_dir:
-            self.status.showMessage(f"Downloading {len(selected)} files to {dest_dir}...")
+        
+        current_bucket = self.bucket_combo.currentText()
+        dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+        if not dest_dir:
+            return 
+
+        # 2. Setup Progress Bar
+        total_files = len(selected_keys)
+        self.status.showMessage(f"Starting download of {total_files} files...")
+        
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, total_files)
+        self.progress_bar.setValue(0)
+        
+        success_count = 0
+        
+        # 3. Download Loop
+        for i, key in enumerate(selected_keys):
+            self.status.showMessage(f"Downloading {i+1}/{total_files}: {key}...")
+            QApplication.processEvents() 
+            
+            # Try to download
+            if self.client.download_object(current_bucket, key, dest_dir):
+                success_count += 1
+            
+            # Update Progress Bar
+            self.progress_bar.setValue(i + 1)
+            
+            # THROTTLE: Sleep for 0.5 seconds to prevent server rate-limiting
+            time.sleep(0.5)
+        
+        # 4. Cleanup
+        self.progress_bar.setVisible(False)
+        
+        if success_count == total_files:
+            self.status.showMessage(f"✅ Success! All {success_count} files downloaded.", 5000)
+        else:
+            self.status.showMessage(f"⚠️ Finished. {success_count}/{total_files} successful.", 8000)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
