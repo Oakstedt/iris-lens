@@ -74,54 +74,57 @@ class HCPClient:
             return []
 
     def fetch_files(self, bucket_name):
-        """ 
-        Attempts to list files. 
-        Note: Since I don't know the exact method name in your library 
-        (e.g., .list_objects() vs .ls()), I am using the s3_resource 
-        that HCPHandler usually exposes, or falling back to a standard s3 call.
-        """
+        """ Mounts the bucket and iterates through the object generator. """
         if not self.handler:
             return []
 
         try:
-            # We try to access the underlying boto3 resource/client if exposed
-            # This is common in these types of wrappers
-            s3 = getattr(self.handler, 's3', None) or getattr(self.handler, 'client', None)
+            print(f"📂 Mounting bucket: {bucket_name}...")
+            # 1. Mount the bucket (Required by NGP-Iris)
+            self.handler.mount_bucket(bucket_name)
+
+            # 2. Get the generator
+            file_generator = self.handler.list_objects()
             
-            # If the handler doesn't expose the client publically, we might need 
-            # to check your library docs, but let's try the standard Boto3 list for now
-            # utilizing the credentials the handler just loaded.
-            if hasattr(self.handler, 'list_objects'):
-                return self.handler.list_objects(bucket_name)
+            files = []
+            
+            # Helper for readable sizes
+            def format_size(size_val):
+                try:
+                    s = float(size_val)
+                    if s > 1024 * 1024: return f"{s / (1024 * 1024):.2f} MB"
+                    if s > 1024: return f"{s / 1024:.2f} KB"
+                    return f"{int(s)} B"
+                except (ValueError, TypeError):
+                    return "0 B"
 
-            # Fallback: We assume the handler set up the connection, 
-            # so we try to grab the client to list files manually.
-            # If this part fails, let me know the method name for listing files in your lib.
-            if s3:
-                 # Logic to format response for the UI table
-                if hasattr(s3, 'list_objects_v2'):
-                    response = s3.list_objects_v2(Bucket=bucket_name)
-                elif hasattr(s3, 'Bucket'): # If it's a resource
-                    response = s3.meta.client.list_objects_v2(Bucket=bucket_name)
-                else:
-                    return []
+            # 3. Iterate through the generator
+            for i, obj in enumerate(file_generator):
+                # DEBUG: Print the structure of the first item so we can see the keys
+                if i == 0:
+                    print(f"🔎 DEBUG - First Object Data: {obj}")
 
-                files = []
-                for obj in response.get('Contents', []):
-                    name = obj['Key']
-                    size = obj['Size']
-                    # Simple size formatting
-                    if size > 1024*1024: size_str = f"{size/(1024*1024):.2f} MB"
-                    elif size > 1024: size_str = f"{size/1024:.2f} KB"
-                    else: size_str = f"{size} B"
-                    
-                    ftype = name.split('.')[-1].upper() if '.' in name else "File"
-                    date = obj['LastModified'].strftime("%Y-%m-%d %H:%M")
-                    files.append((name, size_str, ftype, date))
-                return files
+                # 4. Extract Data (guesses based on standard S3/HCP structure)
+                # Adjust these keys after seeing the debug output if the table is empty!
+                
+                # Try common keys for filename
+                name = obj.get('key') or obj.get('name') or obj.get('Key') or "Unknown"
+                
+                # Try common keys for size
+                raw_size = obj.get('size') or obj.get('Size') or 0
+                size = format_size(raw_size)
+                
+                # Deduce type from extension
+                ftype = name.split('.')[-1].upper() if '.' in name else "File"
+                
+                # Try common keys for date
+                date = obj.get('last_modified') or obj.get('LastModified') or str(obj.get('ingest_time', ''))
+                
+                files.append((name, size, ftype, str(date)))
 
-            return []
+            print(f"✅ Found {len(files)} objects.")
+            return files
 
         except Exception as e:
-            print(f"Fetch error: {e}")
+            print(f"❌ Fetch error: {e}")
             return []
