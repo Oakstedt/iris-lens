@@ -248,26 +248,34 @@ class MainWindow(QMainWindow):
         if not dest_dir:
             return 
 
-        # 2. Ask User: Flatten or Preserve?
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Download Preference")
-        msg_box.setText(f"You are downloading {len(selected_keys)} files.")
-        msg_box.setInformativeText("How would you like to handle the folder structure?")
+        # 2. Smart Check: Are any folders involved?
+        # If any key contains '/', it means it has a path prefix.
+        has_folders = any("/" in key for key in selected_keys)
         
-        # Add Custom Buttons
-        btn_preserve = msg_box.addButton("Preserve Path\n(Keep Folders)", QMessageBox.ButtonRole.ActionRole)
-        btn_flatten = msg_box.addButton("Flatten Path\n(Files Only)", QMessageBox.ButtonRole.ActionRole)
-        msg_box.addButton(QMessageBox.StandardButton.Cancel)
-        
-        msg_box.exec()
-        
-        clicked_button = msg_box.clickedButton()
-        if clicked_button == btn_preserve:
-            flatten_files = False
-        elif clicked_button == btn_flatten:
-            flatten_files = True
-        else:
-            return # Cancelled
+        # Default behavior used if only root files are selected
+        flatten_files = True 
+
+        if has_folders:
+            # Only show popup if at least one file is inside a folder
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Download Preference")
+            msg_box.setText(f"You are downloading {len(selected_keys)} file(s).")
+            msg_box.setInformativeText("How would you like to handle the folder structure?")
+            
+            # Updated button text based on your feedback
+            btn_preserve = msg_box.addButton("Download with folder(s)", QMessageBox.ButtonRole.ActionRole)
+            btn_flatten = msg_box.addButton("Download file(s) only", QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton(QMessageBox.StandardButton.Cancel)
+            
+            msg_box.exec()
+            
+            clicked_button = msg_box.clickedButton()
+            if clicked_button == btn_preserve:
+                flatten_files = False
+            elif clicked_button == btn_flatten:
+                flatten_files = True
+            else:
+                return # Cancelled
 
         # 3. Download Loop
         total_files = len(selected_keys)
@@ -284,7 +292,7 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Downloading {i+1}/{total_files}: {key}...")
             QApplication.processEvents()
             
-            # PASS THE FLATTEN FLAG
+            # Pass the determined flatten setting
             if self.client.download_object(current_bucket, key, dest_dir, flatten=flatten_files):
                 success_count += 1
             
