@@ -3,12 +3,13 @@ import os
 import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QComboBox, QPushButton, QLabel, 
-                             QStatusBar, QProgressBar, QFileDialog, QInputDialog, QLineEdit)
+                             QStatusBar, QProgressBar, QFileDialog, QInputDialog, QLineEdit,
+                             QTreeWidget, QMessageBox)
 
 # Import our modular classes
 from config_manager import ConfigManager
 from hcp_client import HCPClient
-from ui_components import FileBrowserTable
+from ui_components import FileBrowserTree
 
 class MainWindow(QMainWindow):
     """ The main application controller. Connects UI, Logic, and Config. """
@@ -57,11 +58,11 @@ class MainWindow(QMainWindow):
         # C. Search Bar
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Filter displayed files...")
-        self.search_input.textChanged.connect(self.on_search_changed)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
         self.layout.addWidget(self.search_input)
 
         # D. File Table (Imported Component)
-        self.file_browser = FileBrowserTable()
+        self.file_browser = FileBrowserTree()
         self.layout.addWidget(self.file_browser)
 
         # E. Action Buttons
@@ -159,8 +160,9 @@ class MainWindow(QMainWindow):
         self.file_browser.populate_files(files)
         self.status.showMessage(f"Loaded {len(files)} files.", 3000)
 
-    def on_search_changed(self, text):
-        self.file_browser.filter_rows(text)
+    def on_search_text_changed(self, text):
+        # The Tree widget now has its own smart recursive filter
+        self.file_browser.filter_items(text)
 
     def on_upload(self):
         # 1. Check Bucket
@@ -172,21 +174,39 @@ class MainWindow(QMainWindow):
         # 2. Select Local Files
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files to Upload")
         if not files:
-            return # User cancelled selection
+            return 
 
-        # 3. Ask for Remote Destination (Optional)
-        # Defaults to empty string (Root of bucket)
-        remote_folder, ok = QInputDialog.getText(
+        # 3. Get Existing Folders (Smart Selection)
+        self.status.showMessage("Scanning remote folders...")
+        QApplication.processEvents() # Keep UI alive while scanning
+        
+        existing_folders = self.client.get_existing_folders(current_bucket)
+        
+        # Add a clear "Root" option at the top
+        combo_items = ["(Root / No Folder)"] + existing_folders
+        
+        # 4. Show Editable Dropdown
+        # parameters: (parent, title, label, items, current_item_index, editable)
+        remote_folder, ok = QInputDialog.getItem(
             self, 
             "Destination Folder", 
-            "Enter remote folder path (optional):\n(e.g. 'forskning/gisaid/')",
+            "Select an existing folder OR type a new one:", 
+            combo_items, 
+            0,     # Default to first item (Root)
+            True   # <--- TRUE makes it editable (User can type new folder)
         )
+        
         if not ok:
-            return # User cancelled dialog
+            self.status.showMessage("Upload cancelled.", 3000)
+            return
+        
+        # Handle the "Root" selection
+        if remote_folder == "(Root / No Folder)":
+            remote_folder = ""
         
         remote_folder = remote_folder.strip()
 
-        # 4. Upload Loop
+        # 5. Upload Loop
         total_files = len(files)
         self.status.showMessage(f"Starting upload of {total_files} files...")
         
@@ -201,29 +221,23 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Uploading {i+1}/{total_files}: {fname}...")
             QApplication.processEvents()
             
-            # Call our new client method
             if self.client.upload_file(current_bucket, file_path, remote_folder):
                 success_count += 1
             
             self.progress_bar.setValue(i + 1)
             
-            # Throttle slightly to be safe
             import time
             time.sleep(0.5)
 
-        # 5. Cleanup & Refresh
+        # 6. Cleanup & Refresh
         self.progress_bar.setVisible(False)
         self.status.showMessage(f"✅ Upload Complete. {success_count}/{total_files} files uploaded.", 5000)
         
-        # FIX: Call the function that handles "Read Bucket"
-        # (Assuming it is named on_read_bucket based on standard naming)
         if hasattr(self, 'on_read_bucket'):
             self.on_read_bucket()
-        else:
-            print("⚠️ Auto-refresh skipped: Could not find 'on_read_bucket' method.")
 
     def on_download(self):
-        # 1. Get Keys
+        # 1. Get Selected Keys
         selected_keys = self.file_browser.get_selected_file_keys()
         if not selected_keys:
             self.status.showMessage("No files selected.", 3000)
@@ -234,7 +248,28 @@ class MainWindow(QMainWindow):
         if not dest_dir:
             return 
 
-        # 2. Setup Progress Bar
+        # 2. Ask User: Flatten or Preserve?
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Download Preference")
+        msg_box.setText(f"You are downloading {len(selected_keys)} files.")
+        msg_box.setInformativeText("How would you like to handle the folder structure?")
+        
+        # Add Custom Buttons
+        btn_preserve = msg_box.addButton("Preserve Path\n(Keep Folders)", QMessageBox.ButtonRole.ActionRole)
+        btn_flatten = msg_box.addButton("Flatten Path\n(Files Only)", QMessageBox.ButtonRole.ActionRole)
+        msg_box.addButton(QMessageBox.StandardButton.Cancel)
+        
+        msg_box.exec()
+        
+        clicked_button = msg_box.clickedButton()
+        if clicked_button == btn_preserve:
+            flatten_files = False
+        elif clicked_button == btn_flatten:
+            flatten_files = True
+        else:
+            return # Cancelled
+
+        # 3. Download Loop
         total_files = len(selected_keys)
         self.status.showMessage(f"Starting download of {total_files} files...")
         
@@ -244,28 +279,20 @@ class MainWindow(QMainWindow):
         
         success_count = 0
         
-        # 3. Download Loop
+        import time
         for i, key in enumerate(selected_keys):
             self.status.showMessage(f"Downloading {i+1}/{total_files}: {key}...")
-            QApplication.processEvents() 
+            QApplication.processEvents()
             
-            # Try to download
-            if self.client.download_object(current_bucket, key, dest_dir):
+            # PASS THE FLATTEN FLAG
+            if self.client.download_object(current_bucket, key, dest_dir, flatten=flatten_files):
                 success_count += 1
             
-            # Update Progress Bar
             self.progress_bar.setValue(i + 1)
-            
-            # THROTTLE: Sleep for 0.5 seconds to prevent server rate-limiting
             time.sleep(0.5)
         
-        # 4. Cleanup
         self.progress_bar.setVisible(False)
-        
-        if success_count == total_files:
-            self.status.showMessage(f"✅ Success! All {success_count} files downloaded.", 5000)
-        else:
-            self.status.showMessage(f"⚠️ Finished. {success_count}/{total_files} successful.", 8000)
+        self.status.showMessage(f"✅ Download Complete. {success_count}/{total_files} files.", 5000)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

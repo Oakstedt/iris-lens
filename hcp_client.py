@@ -61,76 +61,97 @@ class HCPClient:
         try:
             print(f"📂 Mounting bucket: {bucket_name}...")
             self.handler.mount_bucket(bucket_name)
-            file_generator = self.handler.list_objects()
-            files = []
             
-            def format_size(size_val):
-                try:
-                    s = float(size_val)
-                    if s > 1024 * 1024: return f"{s / (1024 * 1024):.2f} MB"
-                    if s > 1024: return f"{s / 1024:.2f} KB"
-                    return f"{int(s)} B"
-                except (ValueError, TypeError):
-                    return "0 B"
+            s3 = getattr(self.handler, 's3_client', None) or \
+                 getattr(self.handler, 'client', None) or \
+                 getattr(self.handler, 's3', None)
+            
+            if not s3:
+                print("❌ Error: Could not access internal S3 client.")
+                return []
 
-            for i, obj in enumerate(file_generator):
-                # 1. Capture the Raw Key (The Source of Truth)
-                raw_key = obj.get('key') or obj.get('name') or obj.get('Key') or "Unknown"
-                
-                # 2. Prepare Display Data
-                # (You can use os.path.basename(raw_key) here if you only want to see filenames in the table)
-                display_name = raw_key 
-                
-                raw_size = obj.get('size') or obj.get('Size') or 0
-                size = format_size(raw_size)
-                ftype = display_name.split('.')[-1].upper() if '.' in display_name else "File"
-                date = obj.get('last_modified') or obj.get('LastModified') or str(obj.get('ingest_time', ''))
-                
-                # 3. Append TUPLE with 5 items: (Name, Size, Type, Date, RAW_KEY)
-                files.append((display_name, size, ftype, str(date), raw_key))
+            files = []
+            paginator = s3.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name)
 
-            print(f"✅ Found {len(files)} objects.")
+            print("🔎 Scanning raw objects...")
+
+            for page in page_iterator:
+                if 'Contents' not in page:
+                    continue
+                    
+                for obj in page['Contents']:
+                    raw_key = obj.get('Key', 'Unknown')
+                    
+                    # --- FILTERS ---
+                    # 1. Skip Folders (ending in /)
+                    if raw_key.endswith('/'):
+                         continue
+                    
+                    # 2. Skip System/Metadata files (Zone.Identifier)
+                    if "Zone.Identifier" in raw_key:
+                        continue
+                    # ---------------
+
+                    display_name = raw_key
+                    
+                    raw_size = obj.get('Size', 0)
+                    if raw_size > 1024 * 1024: size_str = f"{raw_size / (1024 * 1024):.2f} MB"
+                    elif raw_size > 1024: size_str = f"{raw_size / 1024:.2f} KB"
+                    else: size_str = f"{raw_size} B"
+                    
+                    ftype = display_name.split('.')[-1].upper() if '.' in display_name else "File"
+                    date = obj.get('LastModified', '')
+                    
+                    files.append((display_name, size_str, ftype, str(date), raw_key))
+
+            print(f"✅ Found {len(files)} clean objects.")
             return files
+
         except Exception as e:
             print(f"❌ Fetch error: {e}")
             return []
 
-    def download_object(self, bucket_name, file_key, destination_folder):
+    def download_object(self, bucket_name, file_key, destination_folder, flatten=False):
         """ 
-        Downloads a single object by spinning up a FRESH handler instance.
-        Matches the user's working script EXACTLY (arguments and behavior).
+        Downloads a single object.
+        If flatten=True, saves 'folder/file.txt' as 'destination/file.txt'.
+        If flatten=False, saves as 'destination/folder/file.txt'.
         """
         if not self.credentials_path:
-            print("❌ No credentials path saved. Cannot start fresh connection.")
             return False
 
         try:
-            # 0. Sanitize Inputs (Remove accidental whitespace)
+            # 1. Sanitize Inputs
             bucket_name = str(bucket_name).strip()
             file_key = str(file_key).strip()
 
-            print(f"🔧 DEBUG: Using Creds File: {self.credentials_path}")
-            print(f"🔧 DEBUG: Mounting '{bucket_name}', Downloading '{file_key}'")
+            # 2. Determine Local Path
+            if flatten:
+                # JUST the filename (discard folder path)
+                filename = os.path.basename(file_key)
+                full_local_path = os.path.join(destination_folder, filename)
+            else:
+                # FULL structure (preserve folder path)
+                # Replace forward slashes with OS separator
+                safe_key = file_key.replace('/', os.sep)
+                full_local_path = os.path.join(destination_folder, safe_key)
 
-            # 1. Create a FRESH connection (Exact match to script)
-            temp_handler = HCPHandler(self.credentials_path)
-            
-            # 2. Mount Bucket
-            temp_handler.mount_bucket(bucket_name)
+            full_local_path = os.path.normpath(full_local_path)
 
-            # 3. Construct Local Path (Windows Safe)
-            unsafe_path = os.path.join(destination_folder, file_key)
-            full_local_path = os.path.normpath(unsafe_path)
-
-            # 4. Ensure Directory Exists
+            # 3. Create Directory (Only needed if NOT flattening or if dest doesn't exist)
             local_parent_dir = os.path.dirname(full_local_path)
             if not os.path.exists(local_parent_dir):
                 os.makedirs(local_parent_dir, exist_ok=True)
 
-            print(f"⬇ Downloading to: {full_local_path}")
+            print(f"⬇ Downloading: '{file_key}' -> '{full_local_path}'")
             
-            # 5. Execute Download
-            temp_handler.download_file(file_key, full_local_path)
+            # 4. Connect & Download
+            temp_handler = HCPHandler(self.credentials_path)
+            temp_handler.mount_bucket(bucket_name)
+            
+            # Re-enable progress bar for stability
+            temp_handler.download_file(file_key, full_local_path, show_progress_bar=True)
             
             return True
 
@@ -140,54 +161,106 @@ class HCPClient:
         
     def upload_file(self, bucket_name, local_file_path, remote_folder=""):
         """
-        Uploads a single file using a fresh connection and the underlying s3_client.
-        Mimics the logic from your 'upload_file_single_part_standalone' script.
+        Uploads a single file using a fresh connection.
+        Strictly enforces S3-style keys (forward slashes, no leading slash).
         """
         if not self.credentials_path:
-            print("❌ No credentials path saved. Cannot start fresh connection.")
+            print("❌ No credentials path saved.")
             return False
 
         try:
-            # 1. Fresh Connection (The Script Strategy)
-            temp_handler = HCPHandler(self.credentials_path)
-            temp_handler.mount_bucket(bucket_name)
-
-            # 2. Access the Raw Boto3 Client
-            # Your script uses .s3_client, so we look for that specifically.
-            s3_client = getattr(temp_handler, 's3_client', None)
+            # 1. Sanitize the Remote Folder Path
+            # A. Force string and strip whitespace
+            remote_folder = str(remote_folder).strip()
             
-            # Fallback: Sometimes wrappers name it 'client' or 's3'
-            if not s3_client:
-                 s3_client = getattr(temp_handler, 'client', None) or getattr(temp_handler, 's3', None)
-
-            if not s3_client:
-                raise AttributeError("Could not access underlying S3 client from HCPHandler.")
-
-            # 3. Prepare Key (Remote Path)
-            filename = os.path.basename(local_file_path)
+            # B. Replace Windows Backslashes (\) with S3 Forward Slashes (/)
+            remote_folder = remote_folder.replace("\\", "/")
             
-            # Ensure remote_folder has a trailing slash if it's not empty
+            # C. Remove leading slashes (e.g. "/folder" -> "folder")
+            if remote_folder.startswith("/"):
+                remote_folder = remote_folder.lstrip("/")
+                
+            # D. Ensure trailing slash if folder is not empty
             if remote_folder and not remote_folder.endswith('/'):
                 remote_folder += '/'
             
-            # If remote_folder is just "/", treat it as empty to avoid "//file.txt"
-            if remote_folder == "/":
+            # E. Handle pure root case
+            if remote_folder == "/": 
                 remote_folder = ""
 
+            # 2. Construct the Key
+            filename = os.path.basename(local_file_path)
             object_key = f"{remote_folder}{filename}"
 
-            print(f"⬆ Uploading: {local_file_path} -> {bucket_name}/{object_key}")
+            print(f"🔧 DEBUG: Uploading to Bucket: '{bucket_name}'")
+            print(f"🔧 DEBUG: Final Object Key:    '{object_key}'")
 
-            # 4. Execute Upload (put_object)
+            # 3. Setup Fresh Connection
+            temp_handler = HCPHandler(self.credentials_path)
+            temp_handler.mount_bucket(bucket_name)
+            
+            # 4. Access Client
+            s3_client = getattr(temp_handler, 's3_client', None) or \
+                        getattr(temp_handler, 'client', None) or \
+                        getattr(temp_handler, 's3', None)
+
+            if not s3_client:
+                print("❌ Error: Could not access internal S3 client.")
+                return False
+
+            # 5. Execute Upload
             with open(local_file_path, 'rb') as data:
-                s3_client.put_object(
+                response = s3_client.put_object(
                     Bucket=bucket_name,
                     Key=object_key,
                     Body=data
                 )
-            
-            return True
+                
+                # 6. Verify Response
+                status_code = response.get('ResponseMetadata', {}).get('HTTPStatusCode', 0)
+                print(f"✅ Server Response: {status_code}")
+                
+                if 200 <= status_code < 300:
+                    return True
+                else:
+                    print(f"⚠️ Warning: Upload finished but status code is {status_code}")
+                    return True # Return true anyway as some proxies mask codes
 
         except Exception as e:
             print(f"❌ Upload failed for {local_file_path}: {e}")
             return False
+        
+    def get_existing_folders(self, bucket_name):
+        """ 
+        Scans the bucket to find unique folder paths. 
+        Returns a sorted list of folder strings.
+        """
+        if not self.handler: return []
+
+        try:
+            print(f"📂 Scanning folders in: {bucket_name}...")
+            self.handler.mount_bucket(bucket_name)
+            
+            # We use a set to automatically handle duplicates
+            folders = set()
+            
+            # We reuse the list_objects generator
+            file_generator = self.handler.list_objects()
+            
+            for obj in file_generator:
+                key = obj.get('key') or obj.get('name') or obj.get('Key') or ""
+                
+                # 'os.path.dirname' extracts 'research/data' from 'research/data/file.txt'
+                # We interpret forward slashes as separators regardless of OS here since it's S3
+                if "/" in key:
+                    folder_path = key.rsplit("/", 1)[0] + "/"
+                    folders.add(folder_path)
+            
+            # Convert set to sorted list
+            return sorted(list(folders))
+
+        except Exception as e:
+            print(f"❌ Folder scan error: {e}")
+            return []
+        
+        
