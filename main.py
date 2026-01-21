@@ -1,10 +1,12 @@
 import sys
 import os
 import time
+import ctypes
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QComboBox, QPushButton, QLabel, 
                              QStatusBar, QProgressBar, QFileDialog, QInputDialog, QLineEdit,
                              QTreeWidget, QMessageBox)
+from PyQt6.QtGui import (QFont, QIcon)
 
 # Import our modular classes
 from config_manager import ConfigManager
@@ -16,7 +18,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NGP-Iris Lens")
+        self.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
         self.setMinimumSize(1100, 700)
+        
         
         # Initialize Core Logic modules
         self.config = ConfigManager()
@@ -39,33 +43,36 @@ class MainWindow(QMainWindow):
         self.warning_label.setStyleSheet("color: red; font-weight: bold; background: #ffe6e6; padding: 10px; border-radius: 5px;")
         self.layout.addWidget(self.warning_label)
 
-        # B. Top Navigation Bar
+        # B. Tenant Info (NEW: Added as requested)
+        self.lbl_tenant = QLabel("Connected to Tenant: None")
+        self.lbl_tenant.setStyleSheet("color: gray; margin-bottom: 2px;")
+        self.layout.addWidget(self.lbl_tenant)
+
+        # C. Top Navigation Bar
         self.nav_bar = QHBoxLayout()
         self.bucket_combo = QComboBox()
-        self.btn_refresh = QPushButton("Refresh List")
+        # Removed Refresh Button as requested
         self.btn_read = QPushButton("Read Bucket")
         
         self.nav_bar.addWidget(QLabel("HCP Bucket:"))
         self.nav_bar.addWidget(self.bucket_combo, 1)
         self.nav_bar.addWidget(self.btn_read)
-        self.nav_bar.addWidget(self.btn_refresh)
         
-        self.btn_refresh.clicked.connect(self.on_refresh_buckets)
         self.btn_read.clicked.connect(self.on_read_bucket)
         
         self.layout.addLayout(self.nav_bar)
 
-        # C. Search Bar
+        # D. Search Bar
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Filter displayed files...")
         self.search_input.textChanged.connect(self.on_search_text_changed)
         self.layout.addWidget(self.search_input)
 
-        # D. File Table (Imported Component)
+        # E. File Table (Imported Component)
         self.file_browser = FileBrowserTree()
         self.layout.addWidget(self.file_browser)
 
-        # E. Action Buttons
+        # F. Action Buttons
         self.action_bar = QHBoxLayout()
         self.btn_upload = QPushButton("Upload File...")
         self.btn_download = QPushButton("Download Selected")
@@ -77,11 +84,11 @@ class MainWindow(QMainWindow):
         self.action_bar.addWidget(self.btn_download)
         self.layout.addLayout(self.action_bar)
         
-        # F. Status Bar
+        # G. Status Bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
 
-        # G. Progress bar
+        # H. Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximumWidth(200) # Keep it small
         self.progress_bar.setVisible(False)    # Hide initially
@@ -102,7 +109,7 @@ class MainWindow(QMainWindow):
         self.warning_label.setVisible(not has_creds)
         
         if has_creds:
-            # Try to connect if not already connected
+            # 1. Ensure we are connected
             if not self.client.connected:
                 path = self.config.get("credentials_path")
                 try:
@@ -113,16 +120,26 @@ class MainWindow(QMainWindow):
                     self.warning_label.setVisible(True)
                     return
 
-            # Enable controls
+            # 2. ALWAYS Update Tenant Label (The Fix)
+            # We do this outside the 'if not connected' block so it updates on file swaps too.
+            if self.client.connected:
+                t_addr = getattr(self.client, 'tenant_address', "Unknown")
+                self.lbl_tenant.setText(f"Connected to Tenant: {t_addr}")
+                
+                if "http" in str(t_addr):
+                    self.lbl_tenant.setStyleSheet("color: black; font-weight: bold; margin-bottom: 2px;")
+                else:
+                    self.lbl_tenant.setStyleSheet("color: gray; margin-bottom: 2px;")
+
+            # 3. Enable controls
             self.bucket_combo.setEnabled(True)
             self.btn_read.setEnabled(True)
             
-            # Safely refresh buckets
-            if self.bucket_combo.count() == 0:
-                try:
-                    self.on_refresh_buckets()
-                except Exception as e:
-                    print(f"Bucket refresh failed: {e}")
+            # 4. Safely refresh buckets
+            try:
+                self.on_refresh_buckets()
+            except Exception as e:
+                print(f"Bucket refresh failed: {e}")
         else:
             self.bucket_combo.setEnabled(False)
             self.btn_read.setEnabled(False)
@@ -132,22 +149,27 @@ class MainWindow(QMainWindow):
         if fpath:
             self.config.set("credentials_path", fpath)
             try:
-                self.client.connect(fpath)
-                self.status.showMessage(f"Connected: {os.path.basename(fpath)}", 3000)
-                self.refresh_ui_state()
+                if self.client.connect(fpath):
+                    self.status.showMessage(f"Connected: {os.path.basename(fpath)}", 3000)
+                    
+                    # 1. Clear the old file list immediately
+                    self.file_browser.clear() 
+                    
+                    # 2. Refresh the UI state (buckets, labels, etc.)
+                    self.refresh_ui_state()
             except Exception as e:
                 self.status.showMessage(f"Connection Failed: {str(e)}", 5000)
                 self.warning_label.setText(f"⚠️ Error: {str(e)}")
                 self.warning_label.setVisible(True)
 
     def on_refresh_buckets(self):
-        self.status.showMessage("Refreshing buckets...")
+        # Kept the logic, removed the button
         buckets = self.client.list_buckets()
         self.bucket_combo.clear()
         
         if buckets:
             self.bucket_combo.addItems(buckets)
-            self.status.showMessage("Ready", 2000)
+            self.status.showMessage(f"Ready. {len(buckets)} buckets loaded.", 2000)
         else:
             self.status.showMessage("No buckets found or access denied.", 3000)
 
@@ -156,12 +178,12 @@ class MainWindow(QMainWindow):
         if not current_bucket: return
         
         self.status.showMessage(f"Reading {current_bucket}...")
+        QApplication.processEvents() # Force UI update
         files = self.client.fetch_files(current_bucket)
         self.file_browser.populate_files(files)
         self.status.showMessage(f"Loaded {len(files)} files.", 3000)
 
     def on_search_text_changed(self, text):
-        # The Tree widget now has its own smart recursive filter
         self.file_browser.filter_items(text)
 
     def on_upload(self):
@@ -178,29 +200,25 @@ class MainWindow(QMainWindow):
 
         # 3. Get Existing Folders (Smart Selection)
         self.status.showMessage("Scanning remote folders...")
-        QApplication.processEvents() # Keep UI alive while scanning
+        QApplication.processEvents() 
         
         existing_folders = self.client.get_existing_folders(current_bucket)
         
-        # Add a clear "Root" option at the top
         combo_items = ["(Root / No Folder)"] + existing_folders
         
-        # 4. Show Editable Dropdown
-        # parameters: (parent, title, label, items, current_item_index, editable)
         remote_folder, ok = QInputDialog.getItem(
             self, 
             "Destination Folder", 
             "Select an existing folder OR type a new one:", 
             combo_items, 
-            0,     # Default to first item (Root)
-            True   # <--- TRUE makes it editable (User can type new folder)
+            0,     
+            True   
         )
         
         if not ok:
             self.status.showMessage("Upload cancelled.", 3000)
             return
         
-        # Handle the "Root" selection
         if remote_folder == "(Root / No Folder)":
             remote_folder = ""
         
@@ -227,7 +245,7 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(i + 1)
             
             import time
-            time.sleep(0.5)
+            time.sleep(0.1)
 
         # 6. Cleanup & Refresh
         self.progress_bar.setVisible(False)
@@ -248,21 +266,16 @@ class MainWindow(QMainWindow):
         if not dest_dir:
             return 
 
-        # 2. Smart Check: Are any folders involved?
-        # If any key contains '/', it means it has a path prefix.
+        # 2. Smart Check: Folders involved?
         has_folders = any("/" in key for key in selected_keys)
-        
-        # Default behavior used if only root files are selected
         flatten_files = True 
 
         if has_folders:
-            # Only show popup if at least one file is inside a folder
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Download Preference")
             msg_box.setText(f"You are downloading {len(selected_keys)} file(s).")
             msg_box.setInformativeText("How would you like to handle the folder structure?")
             
-            # Updated button text based on your feedback
             btn_preserve = msg_box.addButton("Download with folder(s)", QMessageBox.ButtonRole.ActionRole)
             btn_flatten = msg_box.addButton("Download file(s) only", QMessageBox.ButtonRole.ActionRole)
             msg_box.addButton(QMessageBox.StandardButton.Cancel)
@@ -275,7 +288,7 @@ class MainWindow(QMainWindow):
             elif clicked_button == btn_flatten:
                 flatten_files = True
             else:
-                return # Cancelled
+                return 
 
         # 3. Download Loop
         total_files = len(selected_keys)
@@ -292,19 +305,29 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Downloading {i+1}/{total_files}: {key}...")
             QApplication.processEvents()
             
-            # Pass the determined flatten setting
             if self.client.download_object(current_bucket, key, dest_dir, flatten=flatten_files):
                 success_count += 1
             
             self.progress_bar.setValue(i + 1)
-            time.sleep(0.5)
+            time.sleep(0.1)
         
         self.progress_bar.setVisible(False)
         self.status.showMessage(f"✅ Download Complete. {success_count}/{total_files} files.", 5000)
 
 if __name__ == "__main__":
+    # 1. The "Taskbar Hack" to show the correct icon
+    # This separates your app from the generic Python host process
+    myappid = 'mycompany.myproduct.subproduct.version' # Arbitrary string
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    
+    # 2. Set the App-wide icon (covers dialogs, taskbar, etc.)
+    # Make sure 'assets/icon.ico' exists!
+    if os.path.exists(os.path.join("assets", "icon.ico")):
+        app.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
+    
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
