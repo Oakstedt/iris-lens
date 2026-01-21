@@ -22,44 +22,47 @@ class FileBrowserTree(QTreeWidget):
 
     def populate_files(self, files):
         """
-        Parses list of tuples: (name, size, type, date, raw_key)
-        Builds a directory tree.
+        Parses list of tuples: (name, size_str, type, date, raw_key, raw_bytes)
+        Builds a directory tree and calculates folder sizes.
         """
         self.clear()
-        self.setSortingEnabled(False) # Disable sorting while building for speed
+        self.setSortingEnabled(False)
         
-        # Map path strings to TreeItems so we can find parents easily
-        # Key: "folder/subfolder", Value: QTreeWidgetItem
         self.dir_cache = {} 
+        
+        # Helper dictionary to track raw byte totals for folders
+        # Key: Folder Path string, Value: Total Bytes (int)
+        folder_sizes = {}
 
         for file_data in files:
-            # Unpack
-            if len(file_data) == 5:
-                name, size, ftype, date, raw_key = file_data
+            # 1. Unpack Data (Handle both old 5-item and new 6-item tuples safely)
+            if len(file_data) == 6:
+                name, size_str, ftype, date, raw_key, raw_bytes = file_data
+            elif len(file_data) == 5:
+                name, size_str, ftype, date, raw_key = file_data
+                raw_bytes = 0 # Fallback
             else:
-                continue # Skip malformed data
+                continue
 
-            # Split the Raw Key into parts (e.g. "research", "data", "file.txt")
+            # 2. Build Tree Nodes
             parts = raw_key.split('/')
-            
-            # The last part is the file, everything before is the path
             filename = parts[-1]
             path_parts = parts[:-1]
             
-            # 1. Find or Create the Parent Folder Node
-            parent_node = self.invisibleRootItem() # Default to root
+            parent_node = self.invisibleRootItem()
             current_path = ""
             
             for folder in path_parts:
-                # Build cumulative path: "research" -> "research/data"
                 current_path = f"{current_path}/{folder}" if current_path else folder
+                
+                # Update Size Accumulator for this folder path
+                folder_sizes[current_path] = folder_sizes.get(current_path, 0) + raw_bytes
                 
                 if current_path in self.dir_cache:
                     parent_node = self.dir_cache[current_path]
                 else:
-                    # Create new folder node
                     new_folder = QTreeWidgetItem(parent_node)
-                    new_folder.setText(0, folder) # Name
+                    new_folder.setText(0, folder)
                     new_folder.setText(2, "Folder")
                     new_folder.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsAutoTristate)
                     new_folder.setCheckState(0, Qt.CheckState.Unchecked)
@@ -67,19 +70,28 @@ class FileBrowserTree(QTreeWidget):
                     self.dir_cache[current_path] = new_folder
                     parent_node = new_folder
 
-            # 2. Add the File Node
+            # 3. Add File Node
             file_item = QTreeWidgetItem(parent_node)
             file_item.setText(0, filename)
-            file_item.setText(1, size)
+            file_item.setText(1, size_str) # File size is already formatted
             file_item.setText(2, ftype)
             file_item.setText(3, date)
-            
-            # Store the Full Raw Key hidden in the item
             file_item.setData(0, Qt.ItemDataRole.UserRole, raw_key)
-            
-            # Setup Checkbox
             file_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             file_item.setCheckState(0, Qt.CheckState.Unchecked)
+
+        # 4. Update Folder Size Columns
+        # Now that the tree is built, go back and set the calculated sizes
+        for path, total_bytes in folder_sizes.items():
+            if path in self.dir_cache:
+                folder_item = self.dir_cache[path]
+                
+                # Format the size
+                if total_bytes > 1024 * 1024: fmt_size = f"{total_bytes / (1024 * 1024):.2f} MB"
+                elif total_bytes > 1024: fmt_size = f"{total_bytes / 1024:.2f} KB"
+                else: fmt_size = f"{total_bytes} B"
+                
+                folder_item.setText(1, fmt_size)
 
         self.setSortingEnabled(True)
 

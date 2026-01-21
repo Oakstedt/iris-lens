@@ -83,19 +83,16 @@ class HCPClient:
                 for obj in page['Contents']:
                     raw_key = obj.get('Key', 'Unknown')
                     
-                    # --- FILTERS ---
-                    # 1. Skip Folders (ending in /)
-                    if raw_key.endswith('/'):
-                         continue
-                    
-                    # 2. Skip System/Metadata files (Zone.Identifier)
-                    if "Zone.Identifier" in raw_key:
+                    # ... (Keep existing filters for folders/Zone.Identifier) ...
+                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key:
                         continue
-                    # ---------------
 
                     display_name = raw_key
                     
+                    # Capture Raw Size (Integer)
                     raw_size = obj.get('Size', 0)
+                    
+                    # Create Display String (Keep existing logic)
                     if raw_size > 1024 * 1024: size_str = f"{raw_size / (1024 * 1024):.2f} MB"
                     elif raw_size > 1024: size_str = f"{raw_size / 1024:.2f} KB"
                     else: size_str = f"{raw_size} B"
@@ -103,7 +100,8 @@ class HCPClient:
                     ftype = display_name.split('.')[-1].upper() if '.' in display_name else "File"
                     date = obj.get('LastModified', '')
                     
-                    files.append((display_name, size_str, ftype, str(date), raw_key))
+                    # UPDATE: Append raw_size as the 6th element
+                    files.append((display_name, size_str, ftype, str(date), raw_key, raw_size))
 
             print(f"✅ Found {len(files)} clean objects.")
             return files
