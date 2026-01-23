@@ -1,4 +1,4 @@
-🚀 How to Run (Windows)
+How to Run (Windows)
 Open Terminal (PowerShell or Command Prompt) in the project folder.
 
 Create a Virtual Environment:
@@ -23,7 +23,7 @@ python main.py
 ---------------------------------------------------------------------
 
 
-🐧 How to Run (Linux / Mac)
+How to Run (Linux / Mac)
 Open Terminal in the project folder.
 
 Create & Activate Environment:
