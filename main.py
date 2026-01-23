@@ -315,16 +315,22 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"✅ Download Complete. {success_count}/{total_files} files.", 5000)
 
 if __name__ == "__main__":
-    # 1. The "Taskbar Hack" to show the correct icon
-    # This separates your app from the generic Python host process
-    myappid = 'mycompany.myproduct.subproduct.version' # Arbitrary string
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
     
-    # 2. Set the App-wide icon (covers dialogs, taskbar, etc.)
-    # Make sure 'assets/icon.ico' exists!
+    # --- LINUX/WINDOWS COMPATIBILITY FIX ---
+    # Only run the "Taskbar Hack" if we are actually on Windows
+    if os.name == 'nt':
+        try:
+            import ctypes
+            myappid = 'mycompany.myproduct.subproduct.version'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass # Fail silently if something goes wrong with Windows API
+    # ---------------------------------------
+
+    app.setStyle("Fusion") 
+    
+    # Set the App-wide icon
     if os.path.exists(os.path.join("assets", "icon.ico")):
         app.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
     
