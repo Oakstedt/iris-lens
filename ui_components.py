@@ -23,12 +23,18 @@ class FileBrowserTree(QTreeWidget):
         self.itemChanged.connect(self.on_item_changed)
         self._blocking_signals = False
 
-        # --- WATERMARK SETUP (INJECTED) ---
+        # --- WATERMARK SETUP ---
         # Loading 'watermark.png' from the assets folder
         self.watermark_pixmap = QPixmap(os.path.join("assets", "watermark.png"))
         self.watermark_opacity = 0.10  # 10% Opacity (Subtle)
 
-    # --- NEW PAINT EVENT (INJECTED) ---
+        # --- THE FIX: Force repaint on scroll ---
+        # This prevents the watermark from artifacting/segmenting during scrolling
+        self.verticalScrollBar().valueChanged.connect(self.viewport().update)
+        self.horizontalScrollBar().valueChanged.connect(self.viewport().update)
+
+
+    # --- PAINT EVENT (UNCHANGED) ---
     def paintEvent(self, event):
         """ 
         Overriding the paint event to draw the watermark 
@@ -56,8 +62,7 @@ class FileBrowserTree(QTreeWidget):
             
             painter.end()
 
-    # --- YOUR ORIGINAL LOGIC BELOW (UNTOUCHED) ---
-
+    # ... rest of the class (populate_files, etc.) remains the same ...
     def populate_files(self, files):
         """
         Parses list of tuples: (name, size_str, type, date, raw_key, raw_bytes)
