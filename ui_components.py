@@ -1,5 +1,8 @@
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView
+import os
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QTreeWidgetItemIterator
 from PyQt6.QtCore import Qt
+# NEW: Imports for the watermark painting
+from PyQt6.QtGui import QPainter, QPixmap
 
 class FileBrowserTree(QTreeWidget):
     def __init__(self, parent=None):
@@ -19,6 +22,41 @@ class FileBrowserTree(QTreeWidget):
         # Connect item changed signal for "Select All Children" logic
         self.itemChanged.connect(self.on_item_changed)
         self._blocking_signals = False
+
+        # --- WATERMARK SETUP (INJECTED) ---
+        # Loading 'watermark.png' from the assets folder
+        self.watermark_pixmap = QPixmap(os.path.join("assets", "watermark.png"))
+        self.watermark_opacity = 0.10  # 10% Opacity (Subtle)
+
+    # --- NEW PAINT EVENT (INJECTED) ---
+    def paintEvent(self, event):
+        """ 
+        Overriding the paint event to draw the watermark 
+        BEHIND or ON TOP of the standard tree items.
+        """
+        # 1. Draw the standard tree widget stuff first
+        super().paintEvent(event)
+
+        # 2. Draw the Watermark
+        if not self.watermark_pixmap.isNull():
+            painter = QPainter(self.viewport())
+            painter.setOpacity(self.watermark_opacity)
+            
+            # Dimensions: Fix it to 256x256 or scale it
+            target_w = 256
+            target_h = 256
+            
+            # Position: Bottom Right with 20px padding
+            x_pos = self.viewport().width() - target_w - 20
+            y_pos = self.viewport().height() - target_h - 20
+            
+            if x_pos > 0 and y_pos > 0:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                painter.drawPixmap(x_pos, y_pos, target_w, target_h, self.watermark_pixmap)
+            
+            painter.end()
+
+    # --- YOUR ORIGINAL LOGIC BELOW (UNTOUCHED) ---
 
     def populate_files(self, files):
         """
@@ -151,6 +189,3 @@ class FileBrowserTree(QTreeWidget):
         root = self.invisibleRootItem()
         for i in range(root.childCount()):
             check_node(root.child(i))
-
-# Helper import needed inside the class
-from PyQt6.QtWidgets import QTreeWidgetItemIterator
