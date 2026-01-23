@@ -1,3 +1,5 @@
+------- WORK IN PROGRESS - Code is currently a mess and will be refactored to my standards. You have been warned. If you found your way here you were most likely (hopefully) personally linked. -------
+
 How to Run (Windows)
 Open Terminal (PowerShell or Command Prompt) in the project folder.
 
