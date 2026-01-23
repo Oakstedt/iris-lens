@@ -15,10 +15,14 @@ Install Dependencies:
 
 PowerShell
 pip install -r requirements.txt
-Run the App:
 
+Run the App:
 PowerShell
 python main.py
+
+---------------------------------------------------------------------
+
+
 🐧 How to Run (Linux / Mac)
 Open Terminal in the project folder.
 
@@ -35,3 +39,5 @@ Run the App:
 
 Bash
 python3 main.py
+
+
