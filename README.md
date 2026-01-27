@@ -1,4 +1,6 @@
-🚀 How to Run (Windows)
+------- WORK IN PROGRESS - Code is currently a mess and will be refactored to my standards. You have been warned. If you found your way here you were most likely (hopefully) personally linked. -------
+
+How to Run (Windows)
 Open Terminal (PowerShell or Command Prompt) in the project folder.
 
 Create a Virtual Environment:
@@ -15,11 +17,15 @@ Install Dependencies:
 
 PowerShell
 pip install -r requirements.txt
-Run the App:
 
+Run the App:
 PowerShell
 python main.py
-🐧 How to Run (Linux / Mac)
+
+---------------------------------------------------------------------
+
+
+How to Run (Linux / Mac)
 Open Terminal in the project folder.
 
 Create & Activate Environment:
@@ -27,6 +33,7 @@ Create & Activate Environment:
 Bash
 python3 -m venv venv
 source venv/bin/activate
+
 Install Dependencies:
 
 Bash
@@ -35,3 +42,5 @@ Run the App:
 
 Bash
 python3 main.py
+
+
