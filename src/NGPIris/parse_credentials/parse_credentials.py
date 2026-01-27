@@ -1,6 +1,10 @@
 from json import load
 from pathlib import Path
-from typing import TypeAlias
+
+try:
+    from typing import TypeAlias
+except ImportError:
+    TypeAlias = Any
 
 Credentials: TypeAlias = dict[str, dict[str, str]]
 
