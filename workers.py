@@ -1,17 +1,16 @@
 import logging
+import time
 from PyQt6.QtCore import QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
 class DownloadWorker(QThread):
-    finished = pyqtSignal()
+    # CHANGED: 'finished' now carries a string (the duration)
+    finished = pyqtSignal(str) 
     error_occurred = pyqtSignal(str)
-    progress_updated = pyqtSignal(int) # Emits 0-100 percentage
+    progress_updated = pyqtSignal(int)
     
     def __init__(self, client, bucket, files_data, dest_folder, flatten=False):
-        """
-        files_data: List of tuples (key, size_in_bytes)
-        """
         super().__init__()
         self.client = client
         self.bucket = bucket
@@ -20,31 +19,29 @@ class DownloadWorker(QThread):
         self.flatten = flatten
         self._is_running = True
         
-        # Calculate Grand Total Size for the job
         self.total_bytes_job = sum(item[1] for item in self.files_data)
         self.bytes_transferred_so_far = 0
+        self._last_emitted_percent = -1
 
     def run(self):
+        # 1. Capture Start Time
+        start_time = time.time()
+        logger.info(f"Starting worker. Job size: {self.total_bytes_job} bytes.")
+
         try:
             for key, size in self.files_data:
                 if not self._is_running: break
                 
-                # Callback function for boto3
                 def _progress_callback(chunk_size):
                     if not self._is_running: return
-                    
                     self.bytes_transferred_so_far += chunk_size
                     
                     if self.total_bytes_job > 0:
                         current_percent = int((self.bytes_transferred_so_far / self.total_bytes_job) * 100)
-                        
-                        # OPTIMIZATION: Only emit if the number changed (e.g., went from 4% to 5%)
                         if current_percent > self._last_emitted_percent:
                             self.progress_updated.emit(current_percent)
                             self._last_emitted_percent = current_percent
-                            
-                # Call the client download with the callback
-                # (Make sure you updated hcp_client.py to accept 'callback' as discussed!)
+
                 self.client.download_object(
                     self.bucket, 
                     key, 
@@ -52,10 +49,27 @@ class DownloadWorker(QThread):
                     flatten=self.flatten,
                     callback=_progress_callback
                 )
-                
-            self.finished.emit()
+            
+            # 2. Calculate Duration
+            end_time = time.time()
+            elapsed_seconds = int(end_time - start_time)
+            
+            # Format nicely (Hours:Minutes:Seconds)
+            hours, remainder = divmod(elapsed_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            if hours > 0:
+                duration_str = f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                duration_str = f"{minutes}m {seconds}s"
+            else:
+                duration_str = f"{seconds}s"
+            
+            # 3. Emit the duration string
+            self.finished.emit(duration_str)
 
         except Exception as e:
+            logger.error(f"Worker crashed: {e}")
             self.error_occurred.emit(str(e))
 
     def stop(self):

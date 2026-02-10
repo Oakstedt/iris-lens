@@ -331,7 +331,11 @@ class MainWindow(QMainWindow):
         self.btn_download.setEnabled(True)
         self.btn_read.setEnabled(True)
         self.worker = None # Cleanup
-        QMessageBox.information(self, "Success", "All files downloaded successfully.")
+        QMessageBox.information(
+            self, 
+            "Download Complete", 
+            f"All files downloaded successfully.\n\nTotal Time: {duration_str}"
+        )
 
     def on_download_error(self, error_msg):
         """ Called if the background thread crashes. """
