@@ -87,8 +87,13 @@ class HCPClient:
             print(f"Fetch error: {e}")
             return []
 
-    def download_object(self, bucket_name, file_key, destination_folder, flatten=False):
+    def download_object(self, bucket_name, file_key, destination_folder, flatten=False, callback=None):
+        """ Downloads a specific object with optional progress reporting. """
+        if not self.handler:
+            return False
+
         try:
+            # 1. Determine local path
             if flatten:
                 filename = os.path.basename(file_key)
                 full_local_path = os.path.join(destination_folder, filename)
@@ -99,13 +104,27 @@ class HCPClient:
             full_local_path = os.path.normpath(full_local_path)
             os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
             
-            # New handler instance for thread safety
-            temp_handler = HCPHandler(self.credentials_path)
-            temp_handler.mount_bucket(bucket_name)
-            temp_handler.download_file(file_key, full_local_path, show_progress_bar=False) 
-            return True
+            # 2. Mount the bucket (ensure connection)
+            self.handler.mount_bucket(bucket_name)
+            
+            # 3. Get the raw S3 client
+            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            
+            # 4. Download with Progress Hook
+            if s3:
+                s3.download_file(
+                    Bucket=bucket_name, 
+                    Key=file_key, 
+                    Filename=full_local_path, 
+                    Callback=callback  # <--- THIS IS THE MISSING LINK
+                )
+                return True
+            return False
+
         except Exception as e:
-            print(f"Download failed: {e}")
+            # We use the logger defined at the top of your file
+            # If you don't have 'logger' defined, change this to print(f"...")
+            logging.getLogger(__name__).error(f"Download failed for {file_key}: {e}")
             return False
 
     def upload_file(self, bucket_name, local_file_path, remote_folder=""):

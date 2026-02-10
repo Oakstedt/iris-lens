@@ -2,11 +2,13 @@ import sys
 import os
 import time
 import ctypes
+from PyQt6.QtGui import (QFont, QIcon)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QComboBox, QPushButton, QLabel, 
-                             QStatusBar, QProgressBar, QFileDialog, QInputDialog, QLineEdit,
-                             QTreeWidget, QMessageBox)
-from PyQt6.QtGui import (QFont, QIcon)
+                             QStatusBar, QProgressBar, QFileDialog, QInputDialog, 
+                             QLineEdit, QMessageBox, QTreeWidgetItemIterator) 
+
+from PyQt6.QtCore import Qt, QObject, pyqtSignal 
 
 # Import our modular classes
 from config_manager import ConfigManager
@@ -258,51 +260,56 @@ class MainWindow(QMainWindow):
             self.on_read_bucket()
 
     def on_download(self):
-        selected_keys = self.file_browser.get_selected_file_keys()
-        if not selected_keys:
-            self.status.showMessage("No files selected.")
-            return
+        print("DEBUG: Download button clicked!")
         
-        current_bucket = self.bucket_combo.currentText()
-        dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
-        if not dest_dir: return 
-
-        # --- Folder Structure Logic (Same as before) ---
-        flatten_files = True 
-        has_folders = any("/" in key for key in selected_keys)
-
-        if has_folders:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Download Preference")
-            msg.setText(f"Downloading {len(selected_keys)} items.")
-            msg.setInformativeText("Maintain folder structure?")
-            btn_preserve = msg.addButton("Yes (Keep Structure)", QMessageBox.ButtonRole.ActionRole)
-            btn_flatten = msg.addButton("No (Flatten Files)", QMessageBox.ButtonRole.ActionRole)
-            msg.addButton(QMessageBox.StandardButton.Cancel)
-            msg.exec()
+        try:
+            # 1. Get Files
+            print("DEBUG: Calling get_selected_files_payload...")
+            selected_files = self.get_selected_files_payload()
+            print(f"DEBUG: Found {len(selected_files)} files.")
             
-            if msg.clickedButton() == btn_preserve: flatten_files = False
-            elif msg.clickedButton() == btn_flatten: flatten_files = True
-            else: return 
+            if not selected_files:
+                print("DEBUG: No files selected, returning.")
+                self.status.showMessage("No files selected.")
+                return
+            
+            # 2. Setup Destination
+            current_bucket = self.bucket_combo.currentText()
+            print(f"DEBUG: Bucket is {current_bucket}")
+            
+            dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+            if not dest_dir: 
+                print("DEBUG: No folder selected, cancelled.")
+                return 
 
-        # --- NEW: Threading Logic ---
-        
-        # 1. Lock UI so user doesn't spam click
-        self.btn_download.setEnabled(False)
-        self.btn_read.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0) # Infinite "Busy" Spinner mode
-        self.status.showMessage(f"Downloading {len(selected_keys)} files... (Please Wait)")
+            print(f"DEBUG: Destination is {dest_dir}")
+            flatten_files = True 
 
-        # 2. Instantiate Worker
-        self.worker = DownloadWorker(self.client, current_bucket, selected_keys, dest_dir, flatten_files)
+            # 3. Lock UI
+            self.btn_download.setEnabled(False)
+            self.btn_read.setEnabled(False)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            
+            # 4. Start Worker
+            print("DEBUG: Initializing Worker...")
+            # Import check
+            from workers import DownloadWorker 
+            
+            self.worker = DownloadWorker(self.client, current_bucket, selected_files, dest_dir, flatten_files)
+            
+            self.worker.finished.connect(self.on_download_finished)
+            self.worker.error_occurred.connect(self.on_download_error)
+            self.worker.progress_updated.connect(self.progress_bar.setValue)
 
-        # 3. Connect Signals
-        self.worker.finished.connect(self.on_download_finished)
-        self.worker.error_occurred.connect(self.on_download_error)
+            print("DEBUG: Starting Worker Thread!")
+            self.worker.start()
 
-        # 4. Start the Thread
-        self.worker.start()
+        except Exception as e:
+            print(f"CRITICAL ERROR in on_download: {e}")
+            import traceback
+            traceback.print_exc()
 
     # --- NEW SLOTS to handle thread results ---
 
@@ -323,7 +330,38 @@ class MainWindow(QMainWindow):
         self.btn_read.setEnabled(True)
         self.worker = None
         QMessageBox.critical(self, "Download Error", f"An error occurred:\n{error_msg}")
+
+    def get_selected_files_payload(self):
+        print("--- STARTING DEEP SCAN ---")
+        selected_files = []
         
+        # 1. Iterate ALL items (Checked or Unchecked) to see what's going on
+        iterator = QTreeWidgetItemIterator(self.file_browser)
+        count = 0
+        
+        while iterator.value():
+            item = iterator.value()
+            text = item.text(0)
+            state = item.checkState(0)
+            raw_key = item.data(0, Qt.ItemDataRole.UserRole)
+            
+            # Print only if it looks interesting (Checked)
+            if state == Qt.CheckState.Checked:
+                print(f"DEBUG: Found CHECKED Item: '{text}'")
+                print(f"       -> Key stored in Data: {raw_key}")
+                
+                if raw_key:
+                    raw_size = item.data(1, Qt.ItemDataRole.UserRole)
+                    selected_files.append((raw_key, raw_size or 0))
+                else:
+                    print("       -> CRITICAL: Item is checked but has NO KEY in UserRole!")
+            
+            iterator += 1
+            count += 1
+            
+        print(f"--- SCAN COMPLETE. Checked {count} total items. Returning {len(selected_files)} files. ---")
+        return selected_files
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     

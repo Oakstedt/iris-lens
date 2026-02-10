@@ -1,56 +1,59 @@
-import os
 import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# Setup logging
 logger = logging.getLogger(__name__)
 
 class DownloadWorker(QThread):
-    """
-    Runs the download operation in a separate thread to prevent UI freezing.
-    Emits signals when finished or if an error occurs.
-    """
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
+    progress_updated = pyqtSignal(int) # Emits 0-100 percentage
     
-    def __init__(self, client, bucket, keys, dest_folder, flatten=False):
+    def __init__(self, client, bucket, files_data, dest_folder, flatten=False):
+        """
+        files_data: List of tuples (key, size_in_bytes)
+        """
         super().__init__()
         self.client = client
         self.bucket = bucket
-        self.keys = keys
+        self.files_data = files_data
         self.dest_folder = dest_folder
         self.flatten = flatten
         self._is_running = True
+        
+        # Calculate Grand Total Size for the job
+        self.total_bytes_job = sum(item[1] for item in self.files_data)
+        self.bytes_transferred_so_far = 0
 
     def run(self):
-        """ The main logic that runs in the background. """
         try:
-            total_files = len(self.keys)
-            logger.info(f"Starting background download for {total_files} items.")
-
-            for i, key in enumerate(self.keys):
-                if not self._is_running:
-                    break
+            for key, size in self.files_data:
+                if not self._is_running: break
                 
-                # Perform the blocking download call here
-                success = self.client.download_object(
+                # Callback function for boto3
+                def _progress_callback(chunk_size):
+                    if not self._is_running: return
+                    
+                    self.bytes_transferred_so_far += chunk_size
+                    
+                    if self.total_bytes_job > 0:
+                        # Calculate global percentage
+                        percent = int((self.bytes_transferred_so_far / self.total_bytes_job) * 100)
+                        self.progress_updated.emit(percent)
+
+                # Call the client download with the callback
+                # (Make sure you updated hcp_client.py to accept 'callback' as discussed!)
+                self.client.download_object(
                     self.bucket, 
                     key, 
                     self.dest_folder, 
-                    flatten=self.flatten
+                    flatten=self.flatten,
+                    callback=_progress_callback
                 )
                 
-                if not success:
-                    # We continue trying other files even if one fails, 
-                    # but you could choose to break here.
-                    logger.warning(f"Failed to download: {key}")
-
             self.finished.emit()
 
         except Exception as e:
-            logger.error(f"Worker crashed: {e}")
             self.error_occurred.emit(str(e))
 
     def stop(self):
-        """ Allows the user to cancel the download cleanly. """
         self._is_running = False
