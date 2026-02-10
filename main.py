@@ -12,6 +12,7 @@ from PyQt6.QtGui import (QFont, QIcon)
 from config_manager import ConfigManager
 from hcp_client import HCPClient
 from ui_components import FileBrowserTree
+from workers import DownloadWorker
 
 class MainWindow(QMainWindow):
     """ The main application controller. Connects UI, Logic, and Config. """
@@ -32,6 +33,8 @@ class MainWindow(QMainWindow):
         
         # Initial State Check (Safe Startup)
         self.refresh_ui_state()
+
+        self.worker = None # Keep reference to current background task
 
     def _init_ui(self):
         self.central_widget = QWidget()
@@ -255,65 +258,72 @@ class MainWindow(QMainWindow):
             self.on_read_bucket()
 
     def on_download(self):
-        # 1. Get Selected Keys
         selected_keys = self.file_browser.get_selected_file_keys()
         if not selected_keys:
-            self.status.showMessage("No files selected.", 3000)
+            self.status.showMessage("No files selected.")
             return
         
         current_bucket = self.bucket_combo.currentText()
         dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
-        if not dest_dir:
-            return 
+        if not dest_dir: return 
 
-        # 2. Smart Check: Folders involved?
-        has_folders = any("/" in key for key in selected_keys)
+        # --- Folder Structure Logic (Same as before) ---
         flatten_files = True 
+        has_folders = any("/" in key for key in selected_keys)
 
         if has_folders:
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Download Preference")
-            msg_box.setText(f"You are downloading {len(selected_keys)} file(s).")
-            msg_box.setInformativeText("How would you like to handle the folder structure?")
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Download Preference")
+            msg.setText(f"Downloading {len(selected_keys)} items.")
+            msg.setInformativeText("Maintain folder structure?")
+            btn_preserve = msg.addButton("Yes (Keep Structure)", QMessageBox.ButtonRole.ActionRole)
+            btn_flatten = msg.addButton("No (Flatten Files)", QMessageBox.ButtonRole.ActionRole)
+            msg.addButton(QMessageBox.StandardButton.Cancel)
+            msg.exec()
             
-            btn_preserve = msg_box.addButton("Download with folder(s)", QMessageBox.ButtonRole.ActionRole)
-            btn_flatten = msg_box.addButton("Download file(s) only", QMessageBox.ButtonRole.ActionRole)
-            msg_box.addButton(QMessageBox.StandardButton.Cancel)
-            
-            msg_box.exec()
-            
-            clicked_button = msg_box.clickedButton()
-            if clicked_button == btn_preserve:
-                flatten_files = False
-            elif clicked_button == btn_flatten:
-                flatten_files = True
-            else:
-                return 
+            if msg.clickedButton() == btn_preserve: flatten_files = False
+            elif msg.clickedButton() == btn_flatten: flatten_files = True
+            else: return 
 
-        # 3. Download Loop
-        total_files = len(selected_keys)
-        self.status.showMessage(f"Starting download of {total_files} files...")
+        # --- NEW: Threading Logic ---
         
+        # 1. Lock UI so user doesn't spam click
+        self.btn_download.setEnabled(False)
+        self.btn_read.setEnabled(False)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, total_files)
-        self.progress_bar.setValue(0)
-        
-        success_count = 0
-        
-        import time
-        for i, key in enumerate(selected_keys):
-            self.status.showMessage(f"Downloading {i+1}/{total_files}: {key}...")
-            QApplication.processEvents()
-            
-            if self.client.download_object(current_bucket, key, dest_dir, flatten=flatten_files):
-                success_count += 1
-            
-            self.progress_bar.setValue(i + 1)
-            time.sleep(0.1)
-        
-        self.progress_bar.setVisible(False)
-        self.status.showMessage(f"✅ Download Complete. {success_count}/{total_files} files.", 5000)
+        self.progress_bar.setRange(0, 0) # Infinite "Busy" Spinner mode
+        self.status.showMessage(f"Downloading {len(selected_keys)} files... (Please Wait)")
 
+        # 2. Instantiate Worker
+        self.worker = DownloadWorker(self.client, current_bucket, selected_keys, dest_dir, flatten_files)
+
+        # 3. Connect Signals
+        self.worker.finished.connect(self.on_download_finished)
+        self.worker.error_occurred.connect(self.on_download_error)
+
+        # 4. Start the Thread
+        self.worker.start()
+
+    # --- NEW SLOTS to handle thread results ---
+
+    def on_download_finished(self):
+        """ Called when the background thread completes. """
+        self.status.showMessage("Download complete.")
+        self.progress_bar.setVisible(False)
+        self.btn_download.setEnabled(True)
+        self.btn_read.setEnabled(True)
+        self.worker = None # Cleanup
+        QMessageBox.information(self, "Success", "All files downloaded successfully.")
+
+    def on_download_error(self, error_msg):
+        """ Called if the background thread crashes. """
+        self.status.showMessage(f"Error: {error_msg}")
+        self.progress_bar.setVisible(False)
+        self.btn_download.setEnabled(True)
+        self.btn_read.setEnabled(True)
+        self.worker = None
+        QMessageBox.critical(self, "Download Error", f"An error occurred:\n{error_msg}")
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
