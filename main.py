@@ -260,57 +260,68 @@ class MainWindow(QMainWindow):
             self.on_read_bucket()
 
     def on_download(self):
-        print("DEBUG: Download button clicked!")
+        # 1. Get Files
+        selected_files = self.get_selected_files_payload()
         
-        try:
-            # 1. Get Files
-            print("DEBUG: Calling get_selected_files_payload...")
-            selected_files = self.get_selected_files_payload()
-            print(f"DEBUG: Found {len(selected_files)} files.")
-            
-            if not selected_files:
-                print("DEBUG: No files selected, returning.")
-                self.status.showMessage("No files selected.")
-                return
-            
-            # 2. Setup Destination
-            current_bucket = self.bucket_combo.currentText()
-            print(f"DEBUG: Bucket is {current_bucket}")
-            
-            dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
-            if not dest_dir: 
-                print("DEBUG: No folder selected, cancelled.")
-                return 
+        if not selected_files:
+            self.status.showMessage("No files selected.")
+            return
+        
+        # 2. Setup Destination
+        current_bucket = self.bucket_combo.currentText()
+        dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+        if not dest_dir: return 
 
-            print(f"DEBUG: Destination is {dest_dir}")
-            flatten_files = True 
+        # 3. [RESTORED] Folder Structure Popup
+        # Check if any selected file is actually inside a folder
+        flatten_files = True 
+        has_folders = any("/" in f[0] for f in selected_files)
 
-            # 3. Lock UI
-            self.btn_download.setEnabled(False)
-            self.btn_read.setEnabled(False)
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(0)
+        if has_folders:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Download Preference")
+            msg.setText(f"Downloading {len(selected_files)} items.")
+            msg.setInformativeText("Maintain folder structure?")
+            btn_preserve = msg.addButton("Yes (Keep Structure)", QMessageBox.ButtonRole.ActionRole)
+            btn_flatten = msg.addButton("No (Flatten Files)", QMessageBox.ButtonRole.ActionRole)
+            msg.addButton(QMessageBox.StandardButton.Cancel)
+            msg.exec()
             
-            # 4. Start Worker
-            print("DEBUG: Initializing Worker...")
-            # Import check
-            from workers import DownloadWorker 
-            
-            self.worker = DownloadWorker(self.client, current_bucket, selected_files, dest_dir, flatten_files)
-            
-            self.worker.finished.connect(self.on_download_finished)
-            self.worker.error_occurred.connect(self.on_download_error)
-            self.worker.progress_updated.connect(self.progress_bar.setValue)
+            if msg.clickedButton() == btn_preserve: flatten_files = False
+            elif msg.clickedButton() == btn_flatten: flatten_files = True
+            else: return # User clicked Cancel
 
-            print("DEBUG: Starting Worker Thread!")
-            self.worker.start()
+        # 4. Lock UI & Reset Progress
+        self.btn_download.setEnabled(False)
+        self.btn_read.setEnabled(False)
+        
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100) 
+        self.progress_bar.setValue(0)
+        
+        # 5. [RESTORED] Initial Status Message
+        total_size_mb = sum(f[1] for f in selected_files) / (1024*1024)
+        initial_msg = f"Downloading {len(selected_files)} files ({total_size_mb:.2f} MB)... (Please Wait)"
+        self.status.showMessage(initial_msg)
 
-        except Exception as e:
-            print(f"CRITICAL ERROR in on_download: {e}")
-            import traceback
-            traceback.print_exc()
+        # 6. Start Worker
+        # (Make sure to import DownloadWorker if you haven't already!)
+        from workers import DownloadWorker 
+        self.worker = DownloadWorker(self.client, current_bucket, selected_files, dest_dir, flatten_files)
+        
+        self.worker.finished.connect(self.on_download_finished)
+        self.worker.error_occurred.connect(self.on_download_error)
+        
+        # We also update the status message continuously with the percentage
+        self.worker.progress_updated.connect(lambda val: self.update_download_status(val, initial_msg))
+        self.worker.progress_updated.connect(self.progress_bar.setValue)
 
+        self.worker.start()
+
+    # --- Helper to keep the status message alive ---
+    def update_download_status(self, percent, base_msg):
+        """ Updates the text so it doesn't just say '0%' """
+        self.status.showMessage(f"{base_msg} - {percent}%")
     # --- NEW SLOTS to handle thread results ---
 
     def on_download_finished(self):

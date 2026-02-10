@@ -36,10 +36,13 @@ class DownloadWorker(QThread):
                     self.bytes_transferred_so_far += chunk_size
                     
                     if self.total_bytes_job > 0:
-                        # Calculate global percentage
-                        percent = int((self.bytes_transferred_so_far / self.total_bytes_job) * 100)
-                        self.progress_updated.emit(percent)
-
+                        current_percent = int((self.bytes_transferred_so_far / self.total_bytes_job) * 100)
+                        
+                        # OPTIMIZATION: Only emit if the number changed (e.g., went from 4% to 5%)
+                        if current_percent > self._last_emitted_percent:
+                            self.progress_updated.emit(current_percent)
+                            self._last_emitted_percent = current_percent
+                            
                 # Call the client download with the callback
                 # (Make sure you updated hcp_client.py to accept 'callback' as discussed!)
                 self.client.download_object(
