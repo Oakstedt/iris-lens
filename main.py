@@ -313,7 +313,6 @@ class MainWindow(QMainWindow):
         self.worker.error_occurred.connect(self.on_download_error)
         
         # We also update the status message continuously with the percentage
-        self.worker.progress_updated.connect(lambda val: self.update_download_status(val, initial_msg))
         self.worker.progress_updated.connect(self.progress_bar.setValue)
 
         self.worker.start()
@@ -324,7 +323,7 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"{base_msg} - {percent}%")
     # --- NEW SLOTS to handle thread results ---
 
-    def on_download_finished(self):
+    def on_download_finished(self, duration_str):
         """ Called when the background thread completes. """
         self.status.showMessage("Download complete.")
         self.progress_bar.setVisible(False)
