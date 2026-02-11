@@ -116,10 +116,18 @@ class FileBrowserTree(QTreeWidget):
             # 3. Add File Node
             file_item = QTreeWidgetItem(parent_node)
             file_item.setText(0, filename)
-            file_item.setText(1, size_str) # File size is already formatted
+            file_item.setText(1, size_str) # Visible text (e.g., "5.2 MB")
             file_item.setText(2, ftype)
             file_item.setText(3, date)
+            
+            # --- HIDDEN DATA STORAGE ---
+            # Store the Key (Col 0)
             file_item.setData(0, Qt.ItemDataRole.UserRole, raw_key)
+            
+            # [FIX] Store the Raw Bytes (Col 1) so the progress bar can read it later
+            file_item.setData(1, Qt.ItemDataRole.UserRole, raw_bytes)
+            # ---------------------------
+
             file_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             file_item.setCheckState(0, Qt.CheckState.Unchecked)
 
