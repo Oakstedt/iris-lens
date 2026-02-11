@@ -20,7 +20,7 @@ class MainWindow(QMainWindow):
     """ The main application controller. Connects UI, Logic, and Config. """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Iris Lens v1 - A HCP browser by GM")
+        self.setWindowTitle("Iris Lens v1.1 - A HCP browser by GM")
         self.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
         self.setMinimumSize(1100, 700)
         
