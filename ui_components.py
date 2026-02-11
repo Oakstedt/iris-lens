@@ -1,7 +1,6 @@
 import os
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QTreeWidgetItemIterator
 from PyQt6.QtCore import Qt
-# NEW: Imports for the watermark painting
 from PyQt6.QtGui import QPainter, QPixmap
 
 class FileBrowserTree(QTreeWidget):
@@ -29,12 +28,11 @@ class FileBrowserTree(QTreeWidget):
         self.watermark_opacity = 0.10  # 10% Opacity (Subtle)
 
         # --- THE FIX: Force repaint on scroll ---
-        # This prevents the watermark from artifacting/segmenting during scrolling
         self.verticalScrollBar().valueChanged.connect(self.viewport().update)
         self.horizontalScrollBar().valueChanged.connect(self.viewport().update)
 
 
-    # --- PAINT EVENT (UNCHANGED) ---
+    # --- PAINT EVENT ---
     def paintEvent(self, event):
         """ 
         Overriding the paint event to draw the watermark 
@@ -62,7 +60,29 @@ class FileBrowserTree(QTreeWidget):
             
             painter.end()
 
-    # ... rest of the class (populate_files, etc.) remains the same ...
+    # --- NEW HELPER FOR GB/TB SUPPORT ---
+    def format_size(self, size_bytes):
+        """ Converts raw bytes into human-readable B, KB, MB, GB, TB. """
+        if size_bytes == 0:
+            return "0 B"
+        
+        # Define thresholds
+        TB = 1099511627776
+        GB = 1073741824
+        MB = 1048576
+        KB = 1024
+        
+        if size_bytes >= TB:
+            return f"{size_bytes / TB:.2f} TB"
+        elif size_bytes >= GB:
+            return f"{size_bytes / GB:.2f} GB"
+        elif size_bytes >= MB:
+            return f"{size_bytes / MB:.2f} MB"
+        elif size_bytes >= KB:
+            return f"{size_bytes / KB:.2f} KB"
+        else:
+            return f"{size_bytes} B"
+
     def populate_files(self, files):
         """
         Parses list of tuples: (name, size_str, type, date, raw_key, raw_bytes)
@@ -116,7 +136,11 @@ class FileBrowserTree(QTreeWidget):
             # 3. Add File Node
             file_item = QTreeWidgetItem(parent_node)
             file_item.setText(0, filename)
-            file_item.setText(1, size_str) # Visible text (e.g., "5.2 MB")
+            
+            # [UPDATED] Use our new helper to format the size dynamically (Supports GB/TB)
+            # This overrides the 'size_str' passed from the client, ensuring consistency.
+            file_item.setText(1, self.format_size(raw_bytes)) 
+            
             file_item.setText(2, ftype)
             file_item.setText(3, date)
             
@@ -124,7 +148,7 @@ class FileBrowserTree(QTreeWidget):
             # Store the Key (Col 0)
             file_item.setData(0, Qt.ItemDataRole.UserRole, raw_key)
             
-            # [FIX] Store the Raw Bytes (Col 1) so the progress bar can read it later
+            # Store the Raw Bytes (Col 1) so the progress bar can read it later
             file_item.setData(1, Qt.ItemDataRole.UserRole, raw_bytes)
             # ---------------------------
 
@@ -137,12 +161,8 @@ class FileBrowserTree(QTreeWidget):
             if path in self.dir_cache:
                 folder_item = self.dir_cache[path]
                 
-                # Format the size
-                if total_bytes > 1024 * 1024: fmt_size = f"{total_bytes / (1024 * 1024):.2f} MB"
-                elif total_bytes > 1024: fmt_size = f"{total_bytes / 1024:.2f} KB"
-                else: fmt_size = f"{total_bytes} B"
-                
-                folder_item.setText(1, fmt_size)
+                # [UPDATED] Use the new helper here too for Folders
+                folder_item.setText(1, self.format_size(total_bytes))
 
         self.setSortingEnabled(True)
 
@@ -167,6 +187,22 @@ class FileBrowserTree(QTreeWidget):
             iterator += 1
             
         return selected_keys
+
+    # [ADDED] Helper for your main.py download logic
+    # This allows you to remove the manual 'get_selected_files_payload' from main.py if you wish
+    def get_selected_files_with_size(self):
+        """ Returns list of (key, size_bytes) for checked files. """
+        selected_files = []
+        iterator = QTreeWidgetItemIterator(self, QTreeWidgetItemIterator.IteratorFlag.Checked)
+        while iterator.value():
+            item = iterator.value()
+            raw_key = item.data(0, Qt.ItemDataRole.UserRole)
+            raw_size = item.data(1, Qt.ItemDataRole.UserRole)
+            
+            if raw_key and raw_size is not None:
+                selected_files.append((raw_key, raw_size))
+            iterator += 1
+        return selected_files
 
     def filter_items(self, text):
         """ 
