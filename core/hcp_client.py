@@ -1,26 +1,34 @@
 import os
 import json
+import logging
 from NGPIris.hcp import HCPHandler
 
+logger = logging.getLogger(__name__)
+
 class HCPClient:
+    """
+    Manages connections and file operations for HCP/S3 storage.
+    Includes 'Smart Mount' to prevent 503 errors during batch operations.
+    """
     def __init__(self, credentials_path="credentials.json"):
         self.handler = None
         self.connected = False
         self.credentials_path = credentials_path
-        self.tenant_address = "None" 
+        self.tenant_address = "None"
+        self._mounted_bucket = None 
 
     def connect(self, credentials_path):
+        """Authenticates using the provided credentials file."""
         if not os.path.exists(credentials_path):
             return False
 
         try:
             self.credentials_path = credentials_path
-            
-            # 1. Initialize NGP-Iris Handler
             self.handler = HCPHandler(credentials_path)
             self.connected = True
+            self._mounted_bucket = None # Reset state on new connection
             
-            # 2. Extract Address (Visual Only - Does not affect connection)
+            # Extract Address (Visual Only)
             try:
                 with open(credentials_path, 'r') as f:
                     data = json.load(f)
@@ -35,16 +43,24 @@ class HCPClient:
         except Exception as e:
             print(f"Connection failed: {e}")
             self.connected = False
-            self.tenant_address = "Not Connected"
+            return False
+
+    def _ensure_mount(self, bucket_name):
+        """Helper: Only mount if we haven't already. Prevents 503s."""
+        if self._mounted_bucket == bucket_name:
+            return True
+        
+        try:
+            self.handler.mount_bucket(bucket_name)
+            self._mounted_bucket = bucket_name
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mount bucket {bucket_name}: {e}")
             return False
 
     def list_buckets(self):
-        """ Uses the native ngp-iris handler to list buckets. """
-        if not self.handler: 
-            return []
-        
+        if not self.handler: return []
         try:
-            # DIRECT CALL: Relies on the library's implementation
             return self.handler.list_buckets()
         except Exception as e:
             print(f"Error calling handler.list_buckets(): {e}")
@@ -53,9 +69,8 @@ class HCPClient:
     def fetch_files(self, bucket_name):
         if not self.handler: return []
         try:
-            self.handler.mount_bucket(bucket_name)
+            self._ensure_mount(bucket_name)
             
-            # Use internal client for detailed metadata (Size, Date)
             s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3: return []
 
@@ -68,9 +83,7 @@ class HCPClient:
                     
                 for obj in page['Contents']:
                     raw_key = obj.get('Key', 'Unknown')
-                    
-                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key:
-                        continue
+                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key: continue
 
                     raw_size = obj.get('Size', 0)
                     if raw_size > 1048576: s_str = f"{raw_size/1048576:.2f} MB"
@@ -79,7 +92,6 @@ class HCPClient:
                     
                     ftype = raw_key.split('.')[-1].upper() if '.' in raw_key else "File"
                     date = obj.get('LastModified', '')
-                    
                     files.append((raw_key, s_str, ftype, str(date), raw_key, raw_size))
 
             return files
@@ -88,9 +100,7 @@ class HCPClient:
             return []
 
     def download_object(self, bucket_name, file_key, destination_folder, flatten=False, callback=None):
-        """ Downloads a specific object with optional progress reporting. """
-        if not self.handler:
-            return False
+        if not self.handler: return False
 
         try:
             # 1. Determine local path
@@ -104,47 +114,49 @@ class HCPClient:
             full_local_path = os.path.normpath(full_local_path)
             os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
             
-            # 2. Mount the bucket (ensure connection)
-            self.handler.mount_bucket(bucket_name)
+            # 2. Smart Mount (Prevents 503)
+            self._ensure_mount(bucket_name)
             
-            # 3. Get the raw S3 client
+            # 3. Download
             s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
-            
-            # 4. Download with Progress Hook
             if s3:
                 s3.download_file(
                     Bucket=bucket_name, 
                     Key=file_key, 
                     Filename=full_local_path, 
-                    Callback=callback  # <--- THIS IS THE MISSING LINK
+                    Callback=callback
                 )
                 return True
             return False
 
         except Exception as e:
-            # We use the logger defined at the top of your file
-            # If you don't have 'logger' defined, change this to print(f"...")
-            logging.getLogger(__name__).error(f"Download failed for {file_key}: {e}")
+            logger.error(f"Download failed for {file_key}: {e}")
             return False
 
-    def upload_file(self, bucket_name, local_file_path, remote_folder=""):
+    def upload_file(self, bucket_name, local_file_path, object_key, callback=None):
+        """
+        Uploads a file.
+        Now uses s3.upload_file to support the callback progress bar.
+        Arguments:
+            bucket_name: The target bucket
+            local_file_path: The absolute path to the local file
+            object_key: The full destination path (folder + filename) in the bucket
+            callback: Optional function for progress tracking
+        """
         try:
-            remote_folder = str(remote_folder).strip().replace("\\", "/")
-            if remote_folder.startswith("/"): remote_folder = remote_folder.lstrip("/")
-            if remote_folder and not remote_folder.endswith('/'): remote_folder += '/'
-            if remote_folder == "/": remote_folder = ""
-
-            filename = os.path.basename(local_file_path)
-            object_key = f"{remote_folder}{filename}"
-
-            temp_handler = HCPHandler(self.credentials_path)
-            temp_handler.mount_bucket(bucket_name)
+            if not self.handler: return False
+            self._ensure_mount(bucket_name)
             
-            s3_client = getattr(temp_handler, 's3_client', getattr(temp_handler, 'client', None))
+            s3_client = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3_client: return False
 
-            with open(local_file_path, 'rb') as data:
-                s3_client.put_object(Bucket=bucket_name, Key=object_key, Body=data)
+            # Using upload_file instead of put_object to support Callback
+            s3_client.upload_file(
+                Filename=local_file_path, 
+                Bucket=bucket_name, 
+                Key=object_key, 
+                Callback=callback
+            )
             
             return True
         except Exception as e:
@@ -154,16 +166,14 @@ class HCPClient:
     def get_existing_folders(self, bucket_name):
         if not self.handler: return []
         try:
-            self.handler.mount_bucket(bucket_name)
+            self._ensure_mount(bucket_name)
             folders = set()
             
-            # Using handler's list_objects if available
             items = []
             if hasattr(self.handler, 'list_objects'):
                 items = self.handler.list_objects()
 
             for obj in items:
-                # Handle dict or object
                 if isinstance(obj, dict):
                     key = obj.get('key') or obj.get('name') or obj.get('Key') or ""
                 else:
