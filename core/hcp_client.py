@@ -1,144 +1,175 @@
-import boto3
+import os
 import json
 import logging
-from botocore.exceptions import NoCredentialsError, ClientError
+from NGPIris.hcp import HCPHandler
 
-# Configure module-level logger
 logger = logging.getLogger(__name__)
 
 class HCPClient:
-    """ Handles AWS S3/HCP interactions including authentication and file operations. """
-    
-    def __init__(self):
-        self.s3_client = None
+    """
+    Manages connections and file operations for HCP/S3 storage using NGPIris.
+    Handles authentication, bucket navigation, and file transfers with progress tracking.
+    """
+    def __init__(self, credentials_path="credentials.json"):
+        """Initializes client state and sets the default credentials path."""
+        self.handler = None
         self.connected = False
-        self.tenant_address = ""
+        self.credentials_path = credentials_path
+        self.tenant_address = "None" 
 
     def connect(self, credentials_path):
-        """ Parses credentials file and initializes the boto3 client. """
+        """Authenticates using the provided credentials file and retrieves tenant details."""
+        if not os.path.exists(credentials_path):
+            return False
+
         try:
-            with open(credentials_path, 'r') as f:
-                creds = json.load(f)
-
-            self.s3_client = boto3.client(
-                's3',
-                aws_access_key_id=creds.get('access_key'),
-                aws_secret_access_key=creds.get('secret_key'),
-                endpoint_url=creds.get('endpoint_url'),
-                verify=creds.get('verify_ssl', True)
-            )
+            self.credentials_path = credentials_path
             
-            # Extract tenant for UI display
-            endpoint = creds.get('endpoint_url', '')
-            self.tenant_address = endpoint.split('//')[-1].split('.')[0] if '//' in endpoint else endpoint
-            
-            # Simple connection test
-            self.s3_client.list_buckets()
+            self.handler = HCPHandler(credentials_path)
             self.connected = True
-            return True
+            
+            try:
+                with open(credentials_path, 'r') as f:
+                    data = json.load(f)
+                    if 'hcp' in data and 'endpoint' in data['hcp']:
+                        self.tenant_address = data['hcp']['endpoint']
+                    else:
+                        self.tenant_address = data.get('endpoint', data.get('s3_endpoint_url', "Unknown"))
+            except:
+                self.tenant_address = "Unknown"
 
+            return True
         except Exception as e:
-            logger.error(f"Connection failed: {e}")
+            print(f"Connection failed: {e}")
             self.connected = False
+            self.tenant_address = "Not Connected"
             return False
 
     def list_buckets(self):
-        """ Returns a list of available bucket names. """
-        if not self.s3_client: return []
+        """Retrieves a list of available buckets from the storage."""
+        if not self.handler: 
+            return []
+        
         try:
-            response = self.s3_client.list_buckets()
-            return [b['Name'] for b in response.get('Buckets', [])]
-        except ClientError as e:
-            logger.error(f"Failed to list buckets: {e}")
+            return self.handler.list_buckets()
+        except Exception as e:
+            print(f"Error calling handler.list_buckets(): {e}")
             return []
 
     def fetch_files(self, bucket_name):
-        """ 
-        Lists all objects in a bucket. 
-        Returns list of tuples: (name, size_str, type, last_modified, key, size_bytes) 
-        """
-        if not self.s3_client: return []
-        
-        file_list = []
+        """Lists files in the bucket with metadata including size, type, and modification date."""
+        if not self.handler: return []
         try:
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket_name):
-                if 'Contents' in page:
-                    for obj in page['Contents']:
-                        key = obj['Key']
-                        size_bytes = obj.get('Size', 0)
-                        last_mod = obj['LastModified'].strftime("%Y-%m-%d %H:%M")
-                        
-                        # Basic type inference
-                        ftype = key.split('.')[-1].upper() if '.' in key else "FILE"
-                        
-                        # Formatting handled by UI, but we provide raw data
-                        size_str = f"{size_bytes} B" 
-                        
-                        file_list.append((key.split('/')[-1], size_str, ftype, last_mod, key, size_bytes))
-                        
-            return file_list
-        except Exception as e:
-            logger.error(f"Error fetching files: {e}")
-            return []
-
-    def get_existing_folders(self, bucket_name):
-        """ Scans bucket for virtual folders (prefixes). """
-        if not self.s3_client: return []
-        folders = set()
-        try:
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket_name):
-                if 'Contents' in page:
-                    for obj in page['Contents']:
-                        key = obj['Key']
-                        if '/' in key:
-                            # Extract directory path
-                            folder = os.path.dirname(key)
-                            folders.add(folder)
-            return sorted(list(folders))
-        except Exception:
-            return []
-
-    def upload_file(self, bucket_name, local_path, remote_folder=""):
-        """ Uploads a single file to the specified bucket and folder. """
-        if not self.s3_client: return False
-        try:
-            filename = os.path.basename(local_path)
-            # Construct key
-            key = f"{remote_folder}/{filename}" if remote_folder else filename
-            # Remove leading slashes to prevent S3 issues
-            if key.startswith("/"): key = key[1:]
+            self.handler.mount_bucket(bucket_name)
             
-            self.s3_client.upload_file(local_path, bucket_name, key)
-            return True
+            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            if not s3: return []
+
+            files = []
+            paginator = s3.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name)
+
+            for page in page_iterator:
+                if 'Contents' not in page: continue
+                    
+                for obj in page['Contents']:
+                    raw_key = obj.get('Key', 'Unknown')
+                    
+                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key:
+                        continue
+
+                    raw_size = obj.get('Size', 0)
+                    if raw_size > 1048576: s_str = f"{raw_size/1048576:.2f} MB"
+                    elif raw_size > 1024: s_str = f"{raw_size/1024:.2f} KB"
+                    else: s_str = f"{raw_size} B"
+                    
+                    ftype = raw_key.split('.')[-1].upper() if '.' in raw_key else "File"
+                    date = obj.get('LastModified', '')
+                    
+                    files.append((raw_key, s_str, ftype, str(date), raw_key, raw_size))
+
+            return files
         except Exception as e:
-            logger.error(f"Upload failed: {e}")
-            return False
+            print(f"Fetch error: {e}")
+            return []
 
     def download_object(self, bucket_name, file_key, destination_folder, flatten=False, callback=None):
-        """ Downloads an object. Supports callbacks for progress bars. """
-        if not self.s3_client: return False
+        """Downloads a specific file to a local path, supporting structure flattening and progress callbacks."""
+        if not self.handler:
+            return False
+
         try:
-            import os
-            
             if flatten:
                 filename = os.path.basename(file_key)
-                local_path = os.path.join(destination_folder, filename)
+                full_local_path = os.path.join(destination_folder, filename)
             else:
                 safe_key = file_key.replace('/', os.sep)
-                local_path = os.path.join(destination_folder, safe_key)
+                full_local_path = os.path.join(destination_folder, safe_key)
 
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            full_local_path = os.path.normpath(full_local_path)
+            os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
             
-            self.s3_client.download_file(
-                Bucket=bucket_name, 
-                Key=file_key, 
-                Filename=local_path,
-                Callback=callback
-            )
-            return True
+            self.handler.mount_bucket(bucket_name)
+            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            
+            if s3:
+                s3.download_file(
+                    Bucket=bucket_name, 
+                    Key=file_key, 
+                    Filename=full_local_path, 
+                    Callback=callback
+                )
+                return True
+            return False
+
         except Exception as e:
             logger.error(f"Download failed for {file_key}: {e}")
             return False
+
+    def upload_file(self, bucket_name, local_file_path, remote_folder=""):
+        """Uploads a local file to the specified bucket and remote folder."""
+        try:
+            remote_folder = str(remote_folder).strip().replace("\\", "/")
+            if remote_folder.startswith("/"): remote_folder = remote_folder.lstrip("/")
+            if remote_folder and not remote_folder.endswith('/'): remote_folder += '/'
+            if remote_folder == "/": remote_folder = ""
+
+            filename = os.path.basename(local_file_path)
+            object_key = f"{remote_folder}{filename}"
+
+            if not self.handler: return False
+            self.handler.mount_bucket(bucket_name)
+            
+            s3_client = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            if not s3_client: return False
+
+            with open(local_file_path, 'rb') as data:
+                s3_client.put_object(Bucket=bucket_name, Key=object_key, Body=data)
+            
+            return True
+        except Exception as e:
+            print(f"Upload failed: {e}")
+            return False
+
+    def get_existing_folders(self, bucket_name):
+        """Scans the bucket to identify existing virtual folder paths."""
+        if not self.handler: return []
+        try:
+            self.handler.mount_bucket(bucket_name)
+            folders = set()
+            
+            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            if not s3: return []
+
+            paginator = s3.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=bucket_name):
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        key = obj.get('Key', '')
+                        if '/' in key:
+                            folder_path = key.rsplit("/", 1)[0]
+                            folders.add(folder_path)
+            
+            return sorted(list(folders))
+        except Exception:
+            return []
