@@ -13,8 +13,8 @@ from PyQt6.QtCore import Qt
 # --- IMPORTS (Refactored) ---
 # We now import the SessionManager from 'core' instead of raw clients
 from core.session import SessionManager 
-from ui_components import FileBrowserTree
-from workers import DownloadWorker
+from ui.components import FileBrowserTree
+from core.workers import DownloadWorker
 
 class MainWindow(QMainWindow):
     """ 

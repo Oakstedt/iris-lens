@@ -24,7 +24,10 @@ class FileBrowserTree(QTreeWidget):
 
         # --- WATERMARK SETUP ---
         # Loading 'watermark.png' from the assets folder
-        self.watermark_pixmap = QPixmap(os.path.join("assets", "watermark.png"))
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        assets_path = os.path.join(base_dir, "assets", "watermark.png")
+        
+        self.watermark_pixmap = QPixmap(assets_path)
         self.watermark_opacity = 0.10  # 10% Opacity (Subtle)
 
         # --- THE FIX: Force repaint on scroll ---
