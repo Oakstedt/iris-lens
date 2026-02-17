@@ -1,7 +1,7 @@
 import os
 import time
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QApplication
-from core.workers import DownloadWorker
+from core.workers import DownloadWorker, UploadWorker
 
 class ActionManager:
     """Handles all button clicks and logic flows for the Main Window."""
@@ -87,21 +87,31 @@ class ActionManager:
         
         if remote_folder == "(Root / No Folder)": remote_folder = ""
         
-        total_files = len(files)
+        # UI Setup
         self.window.progress_bar.setVisible(True)
-        self.window.progress_bar.setRange(0, total_files)
+        self.window.progress_bar.setRange(0, 100) # Changed to percentage for smooth progress
         self.window.progress_bar.setValue(0)
+        self.window.status.showMessage(f"Uploading {len(files)} file(s)...")
         
-        for i, file_path in enumerate(files):
-            self.window.status.showMessage(f"Uploading {i+1}/{total_files}...")
-            QApplication.processEvents()
-            self.session.upload_file(current_bucket, file_path, remote_folder.strip())
-            self.window.progress_bar.setValue(i + 1)
-            time.sleep(0.05)
+        # Instantiate and Start Worker
+        self.worker = UploadWorker(self.session.client, current_bucket, files, remote_folder.strip())
+        self.worker.finished.connect(self._on_upload_finished)
+        self.worker.error_occurred.connect(self._on_upload_error)
+        self.worker.progress_updated.connect(self.window.progress_bar.setValue)
+        self.worker.start()
 
-        self.window.progress_bar.setVisible(False)
+    def _on_upload_finished(self, duration_str):
         self.window.status.showMessage("Upload Complete.", 5000)
-        self.read_bucket()
+        self.window.progress_bar.setVisible(False)
+        self.worker = None
+        self.read_bucket() # Auto-refresh the view
+        QMessageBox.information(self.window, "Complete", f"Upload finished in {duration_str}")
+
+    def _on_upload_error(self, error_msg):
+        self.window.status.showMessage(f"Error: {error_msg}")
+        self.window.progress_bar.setVisible(False)
+        self.worker = None
+        QMessageBox.critical(self.window, "Error", error_msg)
 
     def download(self):
         selected_files = self.window.file_browser.get_selected_files_with_size()

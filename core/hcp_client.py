@@ -1,6 +1,6 @@
 import os
 import json
-import logging  # [FIX] Added missing import to prevent crash
+import logging
 from NGPIris.hcp import HCPHandler
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ class HCPClient:
         self.connected = False
         self.credentials_path = credentials_path
         self.tenant_address = "None"
-        self._mounted_bucket = None # [FIX] Track current bucket to prevent spam
+        self._mounted_bucket = None 
 
     def connect(self, credentials_path):
         """Authenticates using the provided credentials file."""
@@ -46,7 +46,7 @@ class HCPClient:
             return False
 
     def _ensure_mount(self, bucket_name):
-        """ [FIX] Helper: Only mount if we haven't already. Prevents 503s. """
+        """Helper: Only mount if we haven't already. Prevents 503s."""
         if self._mounted_bucket == bucket_name:
             return True
         
@@ -133,24 +133,30 @@ class HCPClient:
             logger.error(f"Download failed for {file_key}: {e}")
             return False
 
-    def upload_file(self, bucket_name, local_file_path, remote_folder=""):
+    def upload_file(self, bucket_name, local_file_path, object_key, callback=None):
+        """
+        Uploads a file.
+        Now uses s3.upload_file to support the callback progress bar.
+        Arguments:
+            bucket_name: The target bucket
+            local_file_path: The absolute path to the local file
+            object_key: The full destination path (folder + filename) in the bucket
+            callback: Optional function for progress tracking
+        """
         try:
-            remote_folder = str(remote_folder).strip().replace("\\", "/")
-            if remote_folder.startswith("/"): remote_folder = remote_folder.lstrip("/")
-            if remote_folder and not remote_folder.endswith('/'): remote_folder += '/'
-            if remote_folder == "/": remote_folder = ""
-
-            filename = os.path.basename(local_file_path)
-            object_key = f"{remote_folder}{filename}"
-
             if not self.handler: return False
             self._ensure_mount(bucket_name)
             
             s3_client = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3_client: return False
 
-            with open(local_file_path, 'rb') as data:
-                s3_client.put_object(Bucket=bucket_name, Key=object_key, Body=data)
+            # Using upload_file instead of put_object to support Callback
+            s3_client.upload_file(
+                Filename=local_file_path, 
+                Bucket=bucket_name, 
+                Key=object_key, 
+                Callback=callback
+            )
             
             return True
         except Exception as e:
