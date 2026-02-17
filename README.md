@@ -2,3 +2,13 @@
 
 To test check out the release section.
 https://github.com/Oakstedt/iris-lens/releases
+
+
+----KNOWN ISSUES----
+
+Uploading larger files, stuck on main thread. Solved for downloads, will be resolved for uploads in 1.2
+
+
+---FOUND A PROBLEM?---
+
+Tell me about it!
