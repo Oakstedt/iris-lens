@@ -8,35 +8,41 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QStatusBar, QProgressBar, QFileDialog, QInputDialog, 
                              QLineEdit, QMessageBox, QTreeWidgetItemIterator) 
 
-from PyQt6.QtCore import Qt, QObject, pyqtSignal 
+from PyQt6.QtCore import Qt
 
-# Import our modular classes
-from config_manager import ConfigManager
-from hcp_client import HCPClient
+# --- IMPORTS (Refactored) ---
+# We now import the SessionManager from 'core' instead of raw clients
+from core.session import SessionManager 
 from ui_components import FileBrowserTree
 from workers import DownloadWorker
 
 class MainWindow(QMainWindow):
-    """ The main application controller. Connects UI, Logic, and Config. """
+    """ 
+    The Main Window 
+    Now acts purely as a Controller. It handles UI events and delegates logic 
+    to the SessionManager.
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Iris Lens v1.1 - A HCP browser by GM")
-        self.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
+        # Ensure assets folder exists or handle gracefully
+        icon_path = os.path.join("assets", "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self.setMinimumSize(1100, 700)
         
-        
-        # Initialize Core Logic modules
-        self.config = ConfigManager()
-        self.client = HCPClient()
+        # --- INIT BRAIN ---
+        # The SessionManager handles Config + HCPClient internally
+        self.session = SessionManager()
 
-        # Build UI
+        # --- INIT BODY ---
         self._init_ui()
         self._init_menu()
         
-        # Initial State Check (Safe Startup)
+        # --- START ENGINE ---
         self.refresh_ui_state()
-
-        self.worker = None # Keep reference to current background task
+        self.worker = None 
 
     def _init_ui(self):
         self.central_widget = QWidget()
@@ -48,7 +54,7 @@ class MainWindow(QMainWindow):
         self.warning_label.setStyleSheet("color: red; font-weight: bold; background: #ffe6e6; padding: 10px; border-radius: 5px;")
         self.layout.addWidget(self.warning_label)
 
-        # B. Tenant Info (NEW: Added as requested)
+        # B. Tenant Info
         self.lbl_tenant = QLabel("Connected to Tenant: None")
         self.lbl_tenant.setStyleSheet("color: gray; margin-bottom: 2px;")
         self.layout.addWidget(self.lbl_tenant)
@@ -56,7 +62,6 @@ class MainWindow(QMainWindow):
         # C. Top Navigation Bar
         self.nav_bar = QHBoxLayout()
         self.bucket_combo = QComboBox()
-        # Removed Refresh Button as requested
         self.btn_read = QPushButton("Read Bucket")
         
         self.nav_bar.addWidget(QLabel("HCP Bucket:"))
@@ -73,7 +78,7 @@ class MainWindow(QMainWindow):
         self.search_input.textChanged.connect(self.on_search_text_changed)
         self.layout.addWidget(self.search_input)
 
-        # E. File Table (Imported Component)
+        # E. File Table
         self.file_browser = FileBrowserTree()
         self.layout.addWidget(self.file_browser)
 
@@ -89,14 +94,13 @@ class MainWindow(QMainWindow):
         self.action_bar.addWidget(self.btn_download)
         self.layout.addLayout(self.action_bar)
         
-        # G. Status Bar
+        # G. Status Bar & Progress
         self.status = QStatusBar()
         self.setStatusBar(self.status)
 
-        # H. Progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(200) # Keep it small
-        self.progress_bar.setVisible(False)    # Hide initially
+        self.progress_bar.setMaximumWidth(200) 
+        self.progress_bar.setVisible(False)    
         self.status.addPermanentWidget(self.progress_bar)
 
     def _init_menu(self):
@@ -109,29 +113,30 @@ class MainWindow(QMainWindow):
     # --- EVENT HANDLERS ---
 
     def refresh_ui_state(self):
-        """ Checks credentials and updates UI. Does NOT crash on failure. """
-        has_creds = self.config.has_credentials()
+        """ 
+        Refactored: Now asks SessionManager about state instead of checking variables directly.
+        """
+        has_creds = self.session.has_credentials()
         self.warning_label.setVisible(not has_creds)
         
         if has_creds:
-            # 1. Ensure we are connected
-            if not self.client.connected:
-                path = self.config.get("credentials_path")
+            # 1. Connect if needed
+            # We access the internal client check via session
+            if not self.session.client.connected:
                 try:
-                    self.client.connect(path)
+                    self.session.connect_from_saved()
                 except Exception as e:
                     print(f"Startup Connection Error: {e}")
                     self.warning_label.setText(f"⚠️ Connection Failed: {str(e)}")
                     self.warning_label.setVisible(True)
                     return
 
-            # 2. ALWAYS Update Tenant Label (The Fix)
-            # We do this outside the 'if not connected' block so it updates on file swaps too.
-            if self.client.connected:
-                t_addr = getattr(self.client, 'tenant_address', "Unknown")
-                self.lbl_tenant.setText(f"Connected to Tenant: {t_addr}")
+            # 2. Update Labels
+            if self.session.client.connected:
+                self.lbl_tenant.setText(self.session.get_tenant_label())
                 
-                if "http" in str(t_addr):
+                # Styling
+                if self.session.is_secure_tenant():
                     self.lbl_tenant.setStyleSheet("color: black; font-weight: bold; margin-bottom: 2px;")
                 else:
                     self.lbl_tenant.setStyleSheet("color: gray; margin-bottom: 2px;")
@@ -140,7 +145,7 @@ class MainWindow(QMainWindow):
             self.bucket_combo.setEnabled(True)
             self.btn_read.setEnabled(True)
             
-            # 4. Safely refresh buckets
+            # 4. Refresh buckets
             try:
                 self.on_refresh_buckets()
             except Exception as e:
@@ -152,15 +157,11 @@ class MainWindow(QMainWindow):
     def on_link_credentials(self):
         fpath, _ = QFileDialog.getOpenFileName(self, "Select Credentials", "", "JSON (*.json);;All Files (*)")
         if fpath:
-            self.config.set("credentials_path", fpath)
             try:
-                if self.client.connect(fpath):
+                # REFACTOR: Use session to link and connect
+                if self.session.link_new_credentials(fpath):
                     self.status.showMessage(f"Connected: {os.path.basename(fpath)}", 3000)
-                    
-                    # 1. Clear the old file list immediately
                     self.file_browser.clear() 
-                    
-                    # 2. Refresh the UI state (buckets, labels, etc.)
                     self.refresh_ui_state()
             except Exception as e:
                 self.status.showMessage(f"Connection Failed: {str(e)}", 5000)
@@ -168,8 +169,8 @@ class MainWindow(QMainWindow):
                 self.warning_label.setVisible(True)
 
     def on_refresh_buckets(self):
-        # Kept the logic, removed the button
-        buckets = self.client.list_buckets()
+        # REFACTOR: Get buckets from session
+        buckets = self.session.get_bucket_list()
         self.bucket_combo.clear()
         
         if buckets:
@@ -183,8 +184,10 @@ class MainWindow(QMainWindow):
         if not current_bucket: return
         
         self.status.showMessage(f"Reading {current_bucket}...")
-        QApplication.processEvents() # Force UI update
-        files = self.client.fetch_files(current_bucket)
+        QApplication.processEvents()
+        
+        # REFACTOR: Fetch files via session
+        files = self.session.fetch_files(current_bucket)
         self.file_browser.populate_files(files)
         self.status.showMessage(f"Loaded {len(files)} files.", 3000)
 
@@ -192,22 +195,19 @@ class MainWindow(QMainWindow):
         self.file_browser.filter_items(text)
 
     def on_upload(self):
-        # 1. Check Bucket
         current_bucket = self.bucket_combo.currentText()
         if not current_bucket:
             self.status.showMessage("No bucket selected.", 3000)
             return
 
-        # 2. Select Local Files
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files to Upload")
-        if not files:
-            return 
+        if not files: return 
 
-        # 3. Get Existing Folders (Smart Selection)
         self.status.showMessage("Scanning remote folders...")
         QApplication.processEvents() 
         
-        existing_folders = self.client.get_existing_folders(current_bucket)
+        # REFACTOR: Access client through session for this specific helper
+        existing_folders = self.session.client.get_existing_folders(current_bucket)
         
         combo_items = ["(Root / No Folder)"] + existing_folders
         
@@ -215,21 +215,17 @@ class MainWindow(QMainWindow):
             self, 
             "Destination Folder", 
             "Select an existing folder OR type a new one:", 
-            combo_items, 
-            0,     
-            True   
+            combo_items, 0, True 
         )
         
         if not ok:
             self.status.showMessage("Upload cancelled.", 3000)
             return
         
-        if remote_folder == "(Root / No Folder)":
-            remote_folder = ""
-        
+        if remote_folder == "(Root / No Folder)": remote_folder = ""
         remote_folder = remote_folder.strip()
 
-        # 5. Upload Loop
+        # Upload Loop
         total_files = len(files)
         self.status.showMessage(f"Starting upload of {total_files} files...")
         
@@ -244,24 +240,22 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Uploading {i+1}/{total_files}: {fname}...")
             QApplication.processEvents()
             
-            if self.client.upload_file(current_bucket, file_path, remote_folder):
+            # REFACTOR: Upload via session
+            if self.session.upload_file(current_bucket, file_path, remote_folder):
                 success_count += 1
             
             self.progress_bar.setValue(i + 1)
-            
-            import time
-            time.sleep(0.1)
+            time.sleep(0.05) # Tiny UI breather
 
-        # 6. Cleanup & Refresh
         self.progress_bar.setVisible(False)
         self.status.showMessage(f"✅ Upload Complete. {success_count}/{total_files} files uploaded.", 5000)
         
-        if hasattr(self, 'on_read_bucket'):
-            self.on_read_bucket()
+        self.on_read_bucket()
 
     def on_download(self):
         # 1. Get Files
-        selected_files = self.get_selected_files_payload()
+        # Use the new helper we added to ui_components (Cleaner than the old loop)
+        selected_files = self.file_browser.get_selected_files_with_size()
         
         if not selected_files:
             self.status.showMessage("No files selected.")
@@ -272,8 +266,7 @@ class MainWindow(QMainWindow):
         dest_dir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
         if not dest_dir: return 
 
-        # 3. [RESTORED] Folder Structure Popup
-        # Check if any selected file is actually inside a folder
+        # 3. Folder Structure Popup
         flatten_files = True 
         has_folders = any("/" in f[0] for f in selected_files)
 
@@ -289,9 +282,9 @@ class MainWindow(QMainWindow):
             
             if msg.clickedButton() == btn_preserve: flatten_files = False
             elif msg.clickedButton() == btn_flatten: flatten_files = True
-            else: return # User clicked Cancel
+            else: return 
 
-        # 4. Lock UI & Reset Progress
+        # 4. Lock UI & Start Worker
         self.btn_download.setEnabled(False)
         self.btn_read.setEnabled(False)
         
@@ -299,37 +292,26 @@ class MainWindow(QMainWindow):
         self.progress_bar.setRange(0, 100) 
         self.progress_bar.setValue(0)
         
-        # 5. [RESTORED] Initial Status Message
         total_size_mb = sum(f[1] for f in selected_files) / (1024*1024)
         initial_msg = f"Downloading {len(selected_files)} files ({total_size_mb:.2f} MB)... (Please Wait)"
         self.status.showMessage(initial_msg)
 
-        # 6. Start Worker
-        # (Make sure to import DownloadWorker if you haven't already!)
-        from workers import DownloadWorker 
-        self.worker = DownloadWorker(self.client, current_bucket, selected_files, dest_dir, flatten_files)
+        # REFACTOR: Pass the 'client' from the session to the worker
+        # The worker needs the raw client object to do its threading magic
+        self.worker = DownloadWorker(self.session.client, current_bucket, selected_files, dest_dir, flatten_files)
         
         self.worker.finished.connect(self.on_download_finished)
         self.worker.error_occurred.connect(self.on_download_error)
-        
-        # We also update the status message continuously with the percentage
         self.worker.progress_updated.connect(self.progress_bar.setValue)
-
+        
         self.worker.start()
 
-    # --- Helper to keep the status message alive ---
-    def update_download_status(self, percent, base_msg):
-        """ Updates the text so it doesn't just say '0%' """
-        self.status.showMessage(f"{base_msg} - {percent}%")
-    # --- NEW SLOTS to handle thread results ---
-
     def on_download_finished(self, duration_str):
-        """ Called when the background thread completes. """
         self.status.showMessage("Download complete.")
         self.progress_bar.setVisible(False)
         self.btn_download.setEnabled(True)
         self.btn_read.setEnabled(True)
-        self.worker = None # Cleanup
+        self.worker = None 
         QMessageBox.information(
             self, 
             "Download Complete", 
@@ -337,7 +319,6 @@ class MainWindow(QMainWindow):
         )
 
     def on_download_error(self, error_msg):
-        """ Called if the background thread crashes. """
         self.status.showMessage(f"Error: {error_msg}")
         self.progress_bar.setVisible(False)
         self.btn_download.setEnabled(True)
@@ -345,56 +326,23 @@ class MainWindow(QMainWindow):
         self.worker = None
         QMessageBox.critical(self, "Download Error", f"An error occurred:\n{error_msg}")
 
-    def get_selected_files_payload(self):
-        print("--- STARTING DEEP SCAN ---")
-        selected_files = []
-        
-        # 1. Iterate ALL items (Checked or Unchecked) to see what's going on
-        iterator = QTreeWidgetItemIterator(self.file_browser)
-        count = 0
-        
-        while iterator.value():
-            item = iterator.value()
-            text = item.text(0)
-            state = item.checkState(0)
-            raw_key = item.data(0, Qt.ItemDataRole.UserRole)
-            
-            # Print only if it looks interesting (Checked)
-            if state == Qt.CheckState.Checked:
-                print(f"DEBUG: Found CHECKED Item: '{text}'")
-                print(f"       -> Key stored in Data: {raw_key}")
-                
-                if raw_key:
-                    raw_size = item.data(1, Qt.ItemDataRole.UserRole)
-                    selected_files.append((raw_key, raw_size or 0))
-                else:
-                    print("       -> CRITICAL: Item is checked but has NO KEY in UserRole!")
-            
-            iterator += 1
-            count += 1
-            
-        print(f"--- SCAN COMPLETE. Checked {count} total items. Returning {len(selected_files)} files. ---")
-        return selected_files
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # --- LINUX/WINDOWS COMPATIBILITY FIX ---
-    # Only run the "Taskbar Hack" if we are actually on Windows
+    # Taskbar Hack for Windows
     if os.name == 'nt':
         try:
-            import ctypes
-            myappid = 'mycompany.myproduct.subproduct.version'
+            myappid = 'mycompany.iris.lens.v1.1'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
-            pass # Fail silently if something goes wrong with Windows API
-    # ---------------------------------------
+            pass
 
     app.setStyle("Fusion") 
     
     # Set the App-wide icon
-    if os.path.exists(os.path.join("assets", "icon.ico")):
-        app.setWindowIcon(QIcon(os.path.join("assets", "icon.ico")))
+    icon_path = os.path.join("assets", "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     window = MainWindow()
     window.show()
