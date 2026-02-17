@@ -1,33 +1,34 @@
 import os
 import json
-import logging
+import logging  # [FIX] Added missing import to prevent crash
 from NGPIris.hcp import HCPHandler
 
 logger = logging.getLogger(__name__)
 
 class HCPClient:
     """
-    Manages connections and file operations for HCP/S3 storage using NGPIris.
-    Handles authentication, bucket navigation, and file transfers with progress tracking.
+    Manages connections and file operations for HCP/S3 storage.
+    Includes 'Smart Mount' to prevent 503 errors during batch operations.
     """
     def __init__(self, credentials_path="credentials.json"):
-        """Initializes client state and sets the default credentials path."""
         self.handler = None
         self.connected = False
         self.credentials_path = credentials_path
-        self.tenant_address = "None" 
+        self.tenant_address = "None"
+        self._mounted_bucket = None # [FIX] Track current bucket to prevent spam
 
     def connect(self, credentials_path):
-        """Authenticates using the provided credentials file and retrieves tenant details."""
+        """Authenticates using the provided credentials file."""
         if not os.path.exists(credentials_path):
             return False
 
         try:
             self.credentials_path = credentials_path
-            
             self.handler = HCPHandler(credentials_path)
             self.connected = True
+            self._mounted_bucket = None # Reset state on new connection
             
+            # Extract Address (Visual Only)
             try:
                 with open(credentials_path, 'r') as f:
                     data = json.load(f)
@@ -42,14 +43,23 @@ class HCPClient:
         except Exception as e:
             print(f"Connection failed: {e}")
             self.connected = False
-            self.tenant_address = "Not Connected"
+            return False
+
+    def _ensure_mount(self, bucket_name):
+        """ [FIX] Helper: Only mount if we haven't already. Prevents 503s. """
+        if self._mounted_bucket == bucket_name:
+            return True
+        
+        try:
+            self.handler.mount_bucket(bucket_name)
+            self._mounted_bucket = bucket_name
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mount bucket {bucket_name}: {e}")
             return False
 
     def list_buckets(self):
-        """Retrieves a list of available buckets from the storage."""
-        if not self.handler: 
-            return []
-        
+        if not self.handler: return []
         try:
             return self.handler.list_buckets()
         except Exception as e:
@@ -57,10 +67,9 @@ class HCPClient:
             return []
 
     def fetch_files(self, bucket_name):
-        """Lists files in the bucket with metadata including size, type, and modification date."""
         if not self.handler: return []
         try:
-            self.handler.mount_bucket(bucket_name)
+            self._ensure_mount(bucket_name)
             
             s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3: return []
@@ -74,9 +83,7 @@ class HCPClient:
                     
                 for obj in page['Contents']:
                     raw_key = obj.get('Key', 'Unknown')
-                    
-                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key:
-                        continue
+                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key: continue
 
                     raw_size = obj.get('Size', 0)
                     if raw_size > 1048576: s_str = f"{raw_size/1048576:.2f} MB"
@@ -85,7 +92,6 @@ class HCPClient:
                     
                     ftype = raw_key.split('.')[-1].upper() if '.' in raw_key else "File"
                     date = obj.get('LastModified', '')
-                    
                     files.append((raw_key, s_str, ftype, str(date), raw_key, raw_size))
 
             return files
@@ -94,11 +100,10 @@ class HCPClient:
             return []
 
     def download_object(self, bucket_name, file_key, destination_folder, flatten=False, callback=None):
-        """Downloads a specific file to a local path, supporting structure flattening and progress callbacks."""
-        if not self.handler:
-            return False
+        if not self.handler: return False
 
         try:
+            # 1. Determine local path
             if flatten:
                 filename = os.path.basename(file_key)
                 full_local_path = os.path.join(destination_folder, filename)
@@ -109,9 +114,11 @@ class HCPClient:
             full_local_path = os.path.normpath(full_local_path)
             os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
             
-            self.handler.mount_bucket(bucket_name)
-            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            # 2. Smart Mount (Prevents 503)
+            self._ensure_mount(bucket_name)
             
+            # 3. Download
+            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if s3:
                 s3.download_file(
                     Bucket=bucket_name, 
@@ -127,7 +134,6 @@ class HCPClient:
             return False
 
     def upload_file(self, bucket_name, local_file_path, remote_folder=""):
-        """Uploads a local file to the specified bucket and remote folder."""
         try:
             remote_folder = str(remote_folder).strip().replace("\\", "/")
             if remote_folder.startswith("/"): remote_folder = remote_folder.lstrip("/")
@@ -138,7 +144,7 @@ class HCPClient:
             object_key = f"{remote_folder}{filename}"
 
             if not self.handler: return False
-            self.handler.mount_bucket(bucket_name)
+            self._ensure_mount(bucket_name)
             
             s3_client = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3_client: return False
@@ -152,24 +158,24 @@ class HCPClient:
             return False
 
     def get_existing_folders(self, bucket_name):
-        """Scans the bucket to identify existing virtual folder paths."""
         if not self.handler: return []
         try:
-            self.handler.mount_bucket(bucket_name)
+            self._ensure_mount(bucket_name)
             folders = set()
             
-            s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
-            if not s3: return []
+            items = []
+            if hasattr(self.handler, 'list_objects'):
+                items = self.handler.list_objects()
 
-            paginator = s3.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket_name):
-                if 'Contents' in page:
-                    for obj in page['Contents']:
-                        key = obj.get('Key', '')
-                        if '/' in key:
-                            folder_path = key.rsplit("/", 1)[0]
-                            folders.add(folder_path)
-            
+            for obj in items:
+                if isinstance(obj, dict):
+                    key = obj.get('key') or obj.get('name') or obj.get('Key') or ""
+                else:
+                    key = getattr(obj, 'key', getattr(obj, 'name', ""))
+                
+                if "/" in key:
+                    folder_path = key.rsplit("/", 1)[0] + "/"
+                    folders.add(folder_path)
             return sorted(list(folders))
         except Exception:
             return []

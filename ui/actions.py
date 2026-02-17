@@ -118,14 +118,15 @@ class ActionManager:
             msg = QMessageBox(self.window)
             msg.setWindowTitle("Download Preference")
             msg.setText("Maintain folder structure?")
-            btn_preserve = msg.addButton("Yes", QMessageBox.ButtonRole.ActionRole)
-            btn_flatten = msg.addButton("No", QMessageBox.ButtonRole.ActionRole)
+            btn_preserve = msg.addButton("Yes (download with folder(s))", QMessageBox.ButtonRole.ActionRole)
+            btn_flatten = msg.addButton("No (download file(s) only)", QMessageBox.ButtonRole.ActionRole)
             msg.exec()
             if msg.clickedButton() == btn_preserve: flatten_files = False
 
         self.window.btn_download.setEnabled(False)
         self.window.progress_bar.setVisible(True)
         self.window.progress_bar.setValue(0)
+        self.window.status.showMessage("Downloading file(s) - Please wait...")
         
         self.worker = DownloadWorker(self.session.client, current_bucket, selected_files, dest_dir, flatten_files)
         self.worker.finished.connect(self._on_download_finished)
