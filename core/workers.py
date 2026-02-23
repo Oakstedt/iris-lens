@@ -118,11 +118,15 @@ class UploadWorker(QThread):
                             self._last_emitted_percent = current_percent
 
                 self.client.upload_file(
-                    self.bucket,
-                    local_path,
-                    remote_key,
+                    self.bucket, 
+                    key, 
+                    self.dest_folder, 
+                    flatten=self.flatten,
                     callback=_progress_callback
                 )
+                
+                if not success:
+                    raise Exception(f"Failed to download '{key}'. The connection was rejected or the path is invalid.")
 
             end_time = time.time()
             elapsed_seconds = int(end_time - start_time)

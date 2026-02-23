@@ -104,11 +104,14 @@ class HCPClient:
 
         try:
             # 1. Determine local path
+            # [FIX 1] Strip leading slashes so Linux doesn't treat it as a root absolute path
+            clean_file_key = file_key.lstrip('/')
+            
             if flatten:
-                filename = os.path.basename(file_key)
+                filename = os.path.basename(clean_file_key)
                 full_local_path = os.path.join(destination_folder, filename)
             else:
-                safe_key = file_key.replace('/', os.sep)
+                safe_key = clean_file_key.replace('/', os.sep)
                 full_local_path = os.path.join(destination_folder, safe_key)
 
             full_local_path = os.path.normpath(full_local_path)
@@ -120,11 +123,16 @@ class HCPClient:
             # 3. Download
             s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if s3:
+                # [FIX 2] Import TransferConfig and disable threads to prevent HCP 503 errors
+                from boto3.s3.transfer import TransferConfig
+                config = TransferConfig(use_threads=False)
+                
                 s3.download_file(
                     Bucket=bucket_name, 
-                    Key=file_key, 
+                    Key=file_key, # Keep original key for the remote fetch
                     Filename=full_local_path, 
-                    Callback=callback
+                    Callback=callback,
+                    Config=config
                 )
                 return True
             return False
