@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from NGPIris.hcp import HCPHandler
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,6 @@ class HCPClient:
         try:
             self.credentials_path = credentials_path
             self.handler = HCPHandler(credentials_path)
-
             # Extract Address (Visual Only)
             try:
                 with open(credentials_path, 'r') as f:
