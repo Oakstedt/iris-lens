@@ -25,9 +25,7 @@ class HCPClient:
         try:
             self.credentials_path = credentials_path
             self.handler = HCPHandler(credentials_path)
-            self.connected = True
-            self._mounted_bucket = None # Reset state on new connection
-            
+
             # Extract Address (Visual Only)
             try:
                 with open(credentials_path, 'r') as f:
