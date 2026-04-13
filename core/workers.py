@@ -1,38 +1,53 @@
-import logging
-import time
 import os
+import time
+import logging
+from typing import List, Tuple, Any
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
+
 class DownloadWorker(QThread):
+    """
+    Background thread for downloading files via the HCPClient.
+    
+    Emits progress updates to keep the main GUI responsive during 
+    long-running network operations.
+    """
     finished = pyqtSignal(str) 
     error_occurred = pyqtSignal(str)
     progress_updated = pyqtSignal(int)
     
-    def __init__(self, client, bucket, files_data, dest_folder, flatten=False):
+    def __init__(self, client: Any, bucket: str, files_data: List[Tuple[str, int]], dest_folder: str, flatten: bool = False) -> None:
+        """Initializes the worker with the active client and download queue."""
         super().__init__()
         self.client = client
         self.bucket = bucket
         self.files_data = files_data
         self.dest_folder = dest_folder
         self.flatten = flatten
-        self._is_running = True
         
+        self._is_running = True
         self.total_bytes_job = sum(item[1] for item in self.files_data)
         self.bytes_transferred_so_far = 0
         self._last_emitted_percent = -1
 
-    def run(self):
+    def run(self) -> None:
+        """Executes the S3 download queue."""
         start_time = time.time()
-        logger.info(f"Starting worker. Job size: {self.total_bytes_job} bytes.")
+        logger.info("Starting worker. Job size: %d bytes.", self.total_bytes_job)
 
         try:
             for key, size in self.files_data:
-                if not self._is_running: break
+                if not self._is_running: 
+                    break
                 
-                def _progress_callback(chunk_size):
-                    if not self._is_running: return
+                def _progress_callback(chunk_size: int) -> None:
+                    """Calculates and emits cumulative download progress."""
+                    if not self._is_running: 
+                        return
+                        
                     self.bytes_transferred_so_far += chunk_size
                     
                     if self.total_bytes_job > 0:
@@ -41,6 +56,7 @@ class DownloadWorker(QThread):
                             self.progress_updated.emit(current_percent)
                             self._last_emitted_percent = current_percent
 
+                # Delegate to the custom HCPClient wrapper
                 self.client.download_object(
                     self.bucket, 
                     key, 
@@ -49,6 +65,7 @@ class DownloadWorker(QThread):
                     callback=_progress_callback
                 )
             
+            # Format completion duration
             end_time = time.time()
             elapsed_seconds = int(end_time - start_time)
             
@@ -65,50 +82,63 @@ class DownloadWorker(QThread):
             self.finished.emit(duration_str)
 
         except Exception as e:
-            logger.error(f"Worker crashed: {e}")
+            logger.error("Worker crashed: %s", e)
             self.error_occurred.emit(str(e))
 
-    def stop(self):
+    def stop(self) -> None:
+        """Safely flags the worker to halt operations."""
         self._is_running = False
 
+
 class UploadWorker(QThread):
+    """
+    Background thread for uploading local files via the HCPClient.
+    
+    Handles path sanitation and emits progress updates to the UI.
+    """
     finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     progress_updated = pyqtSignal(int)
 
-    def __init__(self, client, bucket, files_list, remote_folder):
+    def __init__(self, client: Any, bucket: str, files_list: List[str], remote_folder: str) -> None:
+        """Initializes the worker with the active client and local file list."""
         super().__init__()
         self.client = client
         self.bucket = bucket
         self.files_list = files_list
         self.remote_folder = remote_folder
-        self._is_running = True
         
+        self._is_running = True
         self.total_bytes_job = sum(os.path.getsize(f) for f in self.files_list)
         self.bytes_transferred_so_far = 0
         self._last_emitted_percent = -1
 
-    def run(self):
+    def run(self) -> None:
+        """Executes the S3 upload queue."""
         start_time = time.time()
-        logger.info(f"Starting upload worker. Job size: {self.total_bytes_job} bytes.")
+        logger.info("Starting upload worker. Job size: %d bytes.", self.total_bytes_job)
 
         try:
             for local_path in self.files_list:
-                if not self._is_running: break
+                if not self._is_running: 
+                    break
 
                 filename = os.path.basename(local_path)
                 
-                # [FIX] Sanitize the folder path to avoid double slashes
+                # Sanitize the folder path to avoid double slashes and hidden roots
                 clean_folder = self.remote_folder.strip().replace("\\", "/")
-                clean_folder = clean_folder.rstrip('/') # Remove trailing slash if present
+                clean_folder = clean_folder.rstrip('/') 
                 
                 if clean_folder:
                     remote_key = f"{clean_folder}/{filename}"
                 else:
                     remote_key = filename
                 
-                def _progress_callback(chunk_size):
-                    if not self._is_running: return
+                def _progress_callback(chunk_size: int) -> None:
+                    """Calculates and emits cumulative upload progress."""
+                    if not self._is_running: 
+                        return
+                        
                     self.bytes_transferred_so_far += chunk_size
                     
                     if self.total_bytes_job > 0:
@@ -117,6 +147,7 @@ class UploadWorker(QThread):
                             self.progress_updated.emit(current_percent)
                             self._last_emitted_percent = current_percent
 
+                # Delegate to the custom HCPClient wrapper
                 self.client.upload_file(
                     self.bucket,
                     local_path,
@@ -124,6 +155,7 @@ class UploadWorker(QThread):
                     callback=_progress_callback
                 )
 
+            # Format completion duration
             end_time = time.time()
             elapsed_seconds = int(end_time - start_time)
             
@@ -140,8 +172,9 @@ class UploadWorker(QThread):
             self.finished.emit(duration_str)
 
         except Exception as e:
-            logger.error(f"Upload Worker crashed: {e}")
+            logger.error("Upload Worker crashed: %s", e)
             self.error_occurred.emit(str(e))
 
-    def stop(self):
+    def stop(self) -> None:
+        """Safely flags the worker to halt operations."""
         self._is_running = False

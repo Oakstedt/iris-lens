@@ -1,53 +1,76 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QComboBox, 
-                             QPushButton, QLabel, QStatusBar, QProgressBar, 
-                             QLineEdit)
-from PyQt6.QtGui import QIcon
 import os
+from typing import Any
 
-# Import custom component
+from PyQt6.QtWidgets import (
+    QWidget, 
+    QVBoxLayout, 
+    QHBoxLayout, 
+    QComboBox, 
+    QPushButton, 
+    QLabel, 
+    QStatusBar, 
+    QProgressBar, 
+    QLineEdit
+)
+from PyQt6.QtGui import QIcon
+
+# Internal component imports
 from .components import FileBrowserTree
 
-class MainWindowLayout:
-    """ Handles the visual arrangement of widgets for the Main Window. """
 
-    def setup_ui(self, window):
-        """ Initializes widgets and attaches them to the main window instance. """
+class MainWindowLayout:
+    """
+    Handles the visual arrangement of widgets for the Main Window.
+    
+    Dynamically constructs the UI and injects the widget references directly 
+    into the provided main window instance for downstream action routing.
+    """
+
+    def setup_ui(self, window: Any) -> None:
+        """
+        Initializes layout components and attaches them to the window.
         
-        # 1. Central Widget & Main Layout
+        Args:
+            window: The primary MainWindow instance.
+        """
+        # 1. Central Widget & Main Layout Hierarchy
         window.central_widget = QWidget()
         window.setCentralWidget(window.central_widget)
         window.layout = QVBoxLayout(window.central_widget)
 
-        # 2. Warning Label (Hidden by default)
+        # 2. Connection Warning Banner (Hidden by default)
         window.warning_label = QLabel("No Credentials Linked")
-        window.warning_label.setStyleSheet("color: red; font-weight: bold; background: #ffe6e6; padding: 10px; border-radius: 5px;")
+        window.warning_label.setStyleSheet(
+            "color: red; font-weight: bold; background: #ffe6e6; "
+            "padding: 10px; border-radius: 5px;"
+        )
         window.layout.addWidget(window.warning_label)
 
-        # 3. Tenant Info Label
+        # 3. Tenant Connection Status
         window.lbl_tenant = QLabel("Connected to Tenant: None")
         window.lbl_tenant.setStyleSheet("color: gray; margin-bottom: 2px;")
         window.layout.addWidget(window.lbl_tenant)
 
-        # 4. Navigation Bar
+        # 4. Navigation & Bucket Selection Bar
         nav_layout = QHBoxLayout()
         window.bucket_combo = QComboBox()
         window.btn_read = QPushButton("Read Bucket")
         
         nav_layout.addWidget(QLabel("HCP Bucket:"))
-        nav_layout.addWidget(window.bucket_combo, 1) # Stretch factor 1
+        nav_layout.addWidget(window.bucket_combo, 1)  # Stretch factor 1 allows combo box to expand
         nav_layout.addWidget(window.btn_read)
         window.layout.addLayout(nav_layout)
 
-        # 5. Search Bar
+        # 5. Local Search/Filter Bar
         window.search_input = QLineEdit()
         window.search_input.setPlaceholderText("Filter displayed files...")
         window.layout.addWidget(window.search_input)
 
-        # 6. File Browser (Custom Component)
+        # 6. Primary Data View (Custom QTreeWidget)
         window.file_browser = FileBrowserTree()
         window.layout.addWidget(window.file_browser)
 
-        # 7. Action Bar
+        # 7. Bottom Action Bar (Upload/Download)
         action_layout = QHBoxLayout()
         window.btn_upload = QPushButton("Upload File...")
         window.btn_download = QPushButton("Download Selected")
@@ -56,7 +79,7 @@ class MainWindowLayout:
         action_layout.addWidget(window.btn_download)
         window.layout.addLayout(action_layout)
 
-        # 8. Status Bar & Progress
+        # 8. Status Bar & Embedded Progress Indicator
         window.status = QStatusBar()
         window.setStatusBar(window.status)
 
@@ -65,13 +88,18 @@ class MainWindowLayout:
         window.progress_bar.setVisible(False)
         window.status.addPermanentWidget(window.progress_bar)
 
-    def setup_menu(self, window):
-        """ Initializes the top menu bar. """
+    def setup_menu(self, window: Any) -> None:
+        """
+        Initializes the top menu bar and its associated actions.
+        
+        Args:
+            window: The primary MainWindow instance.
+        """
         menu = window.menuBar().addMenu("File")
         
-        # Link Credentials Action
+        # Credentials linking action
         window.action_link = menu.addAction("Link Credentials File...")
         
-        # Exit Action
+        # Application exit action
         window.action_exit = menu.addAction("Exit")
         window.action_exit.triggered.connect(window.close)
