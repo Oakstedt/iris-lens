@@ -3,6 +3,8 @@
 To test check out the release section.
 https://github.com/Oakstedt/iris-lens/releases
 
+1.2 Linux is coming soon.
+
 
 ----KNOWN ISSUES----
 
