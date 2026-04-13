@@ -11,6 +11,33 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter, QPixmap, QPaintEvent
 
 
+class FileTreeItem(QTreeWidgetItem):
+    """
+    Custom tree item that overrides default string sorting.
+    
+    Allows columns displaying formatted strings (like "2 GB") to be sorted 
+    numerically by their underlying raw data (e.g., total bytes).
+    """
+    
+    def __lt__(self, other: QTreeWidgetItem) -> bool:
+        column = self.treeWidget().sortColumn()
+        
+        # Column 1 is the 'Size' column
+        if column == 1:
+            # Extract the raw bytes stored in the hidden UserRole
+            my_size = self.data(1, Qt.ItemDataRole.UserRole)
+            other_size = other.data(1, Qt.ItemDataRole.UserRole)
+            
+            # Fallback to 0 to prevent crashes if data is somehow missing
+            my_size = float(my_size) if my_size is not None else 0.0
+            other_size = float(other_size) if other_size is not None else 0.0
+            
+            return my_size < other_size
+            
+        # Fall back to standard alphabetical sorting for Name, Type, and Date
+        return super().__lt__(other)
+
+
 class FileBrowserTree(QTreeWidget):
     """
     A custom QTreeWidget for displaying S3 file hierarchies.
@@ -54,10 +81,8 @@ class FileBrowserTree(QTreeWidget):
         Overrides the default paint event to draw a static watermark 
         behind the tree items.
         """
-        # 1. Render the standard tree widget elements
         super().paintEvent(event)
 
-        # 2. Overlay the watermark in the bottom-right corner
         if not self.watermark_pixmap.isNull():
             painter = QPainter(self.viewport())
             painter.setOpacity(self.watermark_opacity)
@@ -68,7 +93,6 @@ class FileBrowserTree(QTreeWidget):
             x_pos = self.viewport().width() - target_w - 20
             y_pos = self.viewport().height() - target_h - 20
             
-            # Only draw if the viewport is large enough to contain the watermark
             if x_pos > 0 and y_pos > 0:
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
                 painter.drawPixmap(x_pos, y_pos, target_w, target_h, self.watermark_pixmap)
@@ -78,12 +102,6 @@ class FileBrowserTree(QTreeWidget):
     def format_size(self, size_bytes: int) -> str:
         """
         Converts raw bytes into a human-readable string.
-        
-        Args:
-            size_bytes: The total size in bytes.
-            
-        Returns:
-            A formatted string appending the appropriate unit (B, KB, MB, GB, TB).
         """
         if size_bytes == 0:
             return "0 B"
@@ -107,30 +125,22 @@ class FileBrowserTree(QTreeWidget):
     def populate_files(self, files: List[Tuple]) -> None:
         """
         Builds the directory tree structure from a flat list of S3 object keys.
-        
-        Calculates cumulative folder sizes bottom-up as it builds the tree.
-        
-        Args:
-            files: A list of tuples containing file metadata. Gracefully handles 
-                   both legacy 5-item and modern 6-item tuples.
         """
         self.clear()
         self.setSortingEnabled(False)
         
-        self.dir_cache: Dict[str, QTreeWidgetItem] = {} 
+        self.dir_cache: Dict[str, FileTreeItem] = {} 
         folder_sizes: Dict[str, int] = {}
 
         for file_data in files:
-            # Safely unpack data depending on the payload format
             if len(file_data) == 6:
                 name, size_str, ftype, date, raw_key, raw_bytes = file_data
             elif len(file_data) == 5:
                 name, size_str, ftype, date, raw_key = file_data
-                raw_bytes = 0  # Fallback for legacy data
+                raw_bytes = 0 
             else:
                 continue
 
-            # Parse the S3 key into folder hierarchy
             parts = raw_key.split('/')
             filename = parts[-1]
             path_parts = parts[:-1]
@@ -138,17 +148,16 @@ class FileBrowserTree(QTreeWidget):
             parent_node = self.invisibleRootItem()
             current_path = ""
             
-            # Construct folder nodes
+            # Construct folder nodes using the custom FileTreeItem
             for folder in path_parts:
                 current_path = f"{current_path}/{folder}" if current_path else folder
                 
-                # Accumulate bytes for the parent folder
                 folder_sizes[current_path] = folder_sizes.get(current_path, 0) + raw_bytes
                 
                 if current_path in self.dir_cache:
                     parent_node = self.dir_cache[current_path]
                 else:
-                    new_folder = QTreeWidgetItem(parent_node)
+                    new_folder = FileTreeItem(parent_node)
                     new_folder.setText(0, folder)
                     new_folder.setText(2, "Folder")
                     new_folder.setFlags(
@@ -161,14 +170,13 @@ class FileBrowserTree(QTreeWidget):
                     self.dir_cache[current_path] = new_folder
                     parent_node = new_folder
 
-            # Construct file nodes
-            file_item = QTreeWidgetItem(parent_node)
+            # Construct file nodes using the custom FileTreeItem
+            file_item = FileTreeItem(parent_node)
             file_item.setText(0, filename)
             file_item.setText(1, self.format_size(raw_bytes)) 
             file_item.setText(2, ftype)
             file_item.setText(3, date)
             
-            # Store hidden metadata for downstream processing (e.g., downloads)
             file_item.setData(0, Qt.ItemDataRole.UserRole, raw_key)
             file_item.setData(1, Qt.ItemDataRole.UserRole, raw_bytes)
             
@@ -180,6 +188,8 @@ class FileBrowserTree(QTreeWidget):
             if path in self.dir_cache:
                 folder_item = self.dir_cache[path]
                 folder_item.setText(1, self.format_size(total_bytes))
+                # Store the raw bytes in the UserRole so folders can be numerically sorted too
+                folder_item.setData(1, Qt.ItemDataRole.UserRole, total_bytes)
 
         self.setSortingEnabled(True)
 
@@ -188,12 +198,7 @@ class FileBrowserTree(QTreeWidget):
         pass
 
     def get_selected_file_keys(self) -> List[str]:
-        """
-        Retrieves the raw S3 keys for all explicitly checked file items.
-        
-        Returns:
-            A list of S3 key strings. Ignores folders.
-        """
+        """Retrieves the raw S3 keys for all explicitly checked file items."""
         selected_keys = []
         iterator = QTreeWidgetItemIterator(self, QTreeWidgetItemIterator.IteratorFlag.Checked)
         
@@ -209,12 +214,7 @@ class FileBrowserTree(QTreeWidget):
         return selected_keys
 
     def get_selected_files_with_size(self) -> List[Tuple[str, int]]:
-        """
-        Retrieves the metadata required for download operations.
-        
-        Returns:
-            A list of tuples containing (raw_key, raw_bytes) for checked files.
-        """
+        """Retrieves the metadata required for download operations."""
         selected_files = []
         iterator = QTreeWidgetItemIterator(self, QTreeWidgetItemIterator.IteratorFlag.Checked)
         
@@ -231,21 +231,12 @@ class FileBrowserTree(QTreeWidget):
         return selected_files
 
     def filter_items(self, text: str) -> None:
-        """
-        Filters the tree visually based on a search string.
-        
-        Uses a bottom-up recursive check: a folder remains visible if its name 
-        matches, OR if any of its descendants match.
-        
-        Args:
-            text: The search substring to match against file/folder names.
-        """
+        """Filters the tree visually based on a search string."""
         search_text = text.lower()
         
         def check_node(item: QTreeWidgetItem) -> bool:
             child_matched = False
             
-            # Recurse through children first to establish bottom-up visibility
             for i in range(item.childCount()):
                 if check_node(item.child(i)):
                     child_matched = True
@@ -256,7 +247,6 @@ class FileBrowserTree(QTreeWidget):
             
             item.setHidden(not should_show)
             
-            # Automatically expand parent nodes so matching children are visible
             if child_matched:
                 item.setExpanded(True)
                 
