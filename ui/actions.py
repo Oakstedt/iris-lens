@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QApplication
 
 from core.workers import DownloadWorker, UploadWorker
 
+from ui.components import AboutDialog
+
 
 class ActionManager:
     """
@@ -210,3 +212,35 @@ class ActionManager:
         self.worker = None
         
         QMessageBox.critical(self.window, "Error", error_msg)
+
+    def show_about(self) -> None:
+        """Instantiates and displays the About dialog, listening for the admin unlock signal."""
+        from .components import AboutDialog  # Local import prevents circular dependencies
+        
+        about_dialog = AboutDialog(self.window)
+        # Connect the successful password entry to our unlock method
+        about_dialog.admin_unlocked.connect(self._enable_admin_mode)
+        about_dialog.exec()
+
+    def _enable_admin_mode(self) -> None:
+        """Reveals the deletion UI and updates the session state."""
+        self.window.btn_delete.setVisible(True)
+        self.window.status.showMessage("Admin Mode Unlocked: Deletion enabled.", 4000)
+        
+    def delete_selected(self) -> None:
+        """Placeholder for the deletion logic. Verifies intent before routing to S3."""
+        selected_files = self.window.file_browser.get_selected_files_with_size()
+        if not selected_files:
+            self.window.status.showMessage("No files selected for deletion.")
+            return
+            
+        reply = QMessageBox.warning(
+            self.window, 
+            "Confirm Deletion", 
+            f"Are you sure you want to permanently delete {len(selected_files)} file(s)?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # We will build the DeleteWorker next!
+            self.window.status.showMessage("Deletion feature pending worker implementation...")
