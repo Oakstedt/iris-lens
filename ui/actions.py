@@ -3,7 +3,7 @@ from typing import Any
 
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QApplication
 
-from core.workers import DownloadWorker, UploadWorker
+from core.workers import DownloadWorker, UploadWorker, DeleteWorker
 
 from ui.components import AboutDialog
 
@@ -228,19 +228,54 @@ class ActionManager:
         self.window.status.showMessage("Admin Mode Unlocked: Deletion enabled.", 4000)
         
     def delete_selected(self) -> None:
-        """Placeholder for the deletion logic. Verifies intent before routing to S3."""
-        selected_files = self.window.file_browser.get_selected_files_with_size()
-        if not selected_files:
+        """Confirms user intent, configures the UI, and starts the DeleteWorker."""
+        # We only need the keys for deletion, not the file sizes
+        selected_keys = self.window.file_browser.get_selected_file_keys()
+        
+        if not selected_keys:
             self.window.status.showMessage("No files selected for deletion.")
             return
             
+        current_bucket = self.window.bucket_combo.currentText()
+        if not current_bucket: 
+            return
+
         reply = QMessageBox.warning(
             self.window, 
             "Confirm Deletion", 
-            f"Are you sure you want to permanently delete {len(selected_files)} file(s)?\n\nThis cannot be undone.",
+            f"Are you sure you want to permanently delete {len(selected_keys)} file(s)?\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            # We will build the DeleteWorker next!
-            self.window.status.showMessage("Deletion feature pending worker implementation...")
+            # Lock UI and show progress
+            self.window.btn_delete.setEnabled(False)
+            self.window.progress_bar.setVisible(True)
+            self.window.progress_bar.setValue(0)
+            self.window.status.showMessage(f"Deleting {len(selected_keys)} file(s)...")
+            
+            # Instantiate and start the worker
+            self.worker = DeleteWorker(self.session.client, current_bucket, selected_keys)
+            self.worker.finished.connect(self._on_delete_finished)
+            self.worker.error_occurred.connect(self._on_delete_error)
+            self.worker.progress_updated.connect(self.window.progress_bar.setValue)
+            self.worker.start()
+
+    def _on_delete_finished(self, _ : str) -> None:
+        """Callback triggered upon successful completion of the DeleteWorker."""
+        self.window.status.showMessage("Deletion complete.")
+        self.window.progress_bar.setVisible(False)
+        self.window.btn_delete.setEnabled(True)
+        self.worker = None
+        
+        self.read_bucket()  # Auto-refresh to remove deleted items from the tree
+        QMessageBox.information(self.window, "Complete", "Files successfully deleted.")
+
+    def _on_delete_error(self, error_msg: str) -> None:
+        """Callback triggered if the DeleteWorker encounters an exception."""
+        self.window.status.showMessage(f"Error: {error_msg}")
+        self.window.progress_bar.setVisible(False)
+        self.window.btn_delete.setEnabled(True)
+        self.worker = None
+        
+        QMessageBox.critical(self.window, "Error", error_msg)

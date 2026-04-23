@@ -278,3 +278,31 @@ class HCPClient:
             return sorted(list(folders))
         except Exception:
             return []
+        
+    def delete_object(self, bucket_name: str, file_key: str) -> bool:
+        """
+        Permanently deletes a specific object from the S3 bucket.
+        
+        Args:
+            bucket_name: The target S3 bucket.
+            file_key: The exact key of the file to delete.
+            
+        Returns:
+            True if the deletion was successful, False otherwise.
+        """
+        try:
+            if not self.handler: 
+                return False
+                
+            self._ensure_mount(bucket_name)
+            
+            s3_client = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
+            if not s3_client: 
+                return False
+
+            s3_client.delete_object(Bucket=bucket_name, Key=file_key)
+            return True
+            
+        except Exception as e:
+            logger.error("Delete failed for %s: %s", file_key, e)
+            return False
