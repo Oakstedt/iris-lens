@@ -131,10 +131,10 @@ class HCPClient:
                 for obj in page['Contents']:
                     raw_key = obj.get('Key', 'Unknown')
                     
-                    # Filter out folder root objects and system metadata files
-                    if raw_key.endswith('/') or "Zone.Identifier" in raw_key: 
+                    # Only filter out system metadata files, let folder markers through
+                    if "Zone.Identifier" in raw_key: 
                         continue
-
+                    
                     raw_size = obj.get('Size', 0)
                     
                     # Legacy string size formatting fallback

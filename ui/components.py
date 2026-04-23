@@ -148,9 +148,17 @@ class FileBrowserTree(QTreeWidget):
             else:
                 continue
 
-            parts = raw_key.split('/')
-            filename = parts[-1]
-            path_parts = parts[:-1]
+            # [FIX] Identify if this item is a 0-byte folder marker
+            is_folder_marker = raw_key.endswith('/')
+
+            if is_folder_marker:
+                # If it's "testfolder/", split safely without creating an empty filename
+                path_parts = [p for p in raw_key.split('/') if p]
+                filename = ""
+            else:
+                parts = raw_key.split('/')
+                filename = parts[-1]
+                path_parts = parts[:-1]
             
             parent_node = self.invisibleRootItem()
             current_path = ""
@@ -167,6 +175,10 @@ class FileBrowserTree(QTreeWidget):
                     new_folder = FileTreeItem(parent_node)
                     new_folder.setText(0, folder)
                     new_folder.setText(2, "Folder")
+                    
+                    # Store the explicit S3 folder marker key
+                    new_folder.setData(0, Qt.ItemDataRole.UserRole, current_path + "/")
+                    
                     new_folder.setFlags(
                         Qt.ItemFlag.ItemIsUserCheckable | 
                         Qt.ItemFlag.ItemIsEnabled | 
@@ -176,6 +188,11 @@ class FileBrowserTree(QTreeWidget):
                     
                     self.dir_cache[current_path] = new_folder
                     parent_node = new_folder
+
+            # [FIX] If this was purely an S3 folder marker, stop here!
+            # Do not proceed to build a blank file node underneath it.
+            if is_folder_marker:
+                continue
 
             # Construct file nodes using the custom FileTreeItem
             file_item = FileTreeItem(parent_node)
@@ -195,7 +212,6 @@ class FileBrowserTree(QTreeWidget):
             if path in self.dir_cache:
                 folder_item = self.dir_cache[path]
                 folder_item.setText(1, self.format_size(total_bytes))
-                # Store the raw bytes in the UserRole so folders can be numerically sorted too
                 folder_item.setData(1, Qt.ItemDataRole.UserRole, total_bytes)
 
         self.setSortingEnabled(True)
@@ -230,7 +246,8 @@ class FileBrowserTree(QTreeWidget):
             raw_key = item.data(0, Qt.ItemDataRole.UserRole)
             raw_size = item.data(1, Qt.ItemDataRole.UserRole)
             
-            if raw_key and raw_size is not None:
+            # [FIX] Explicitly ignore folder markers (keys ending with '/') for downloads
+            if raw_key and raw_size is not None and not str(raw_key).endswith('/'):
                 selected_files.append((raw_key, raw_size))
                 
             iterator += 1
