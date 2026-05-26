@@ -148,11 +148,11 @@ class FileBrowserTree(QTreeWidget):
             else:
                 continue
 
-            # [FIX] Identify if this item is a 0-byte folder marker
+            # Identify if this item is a 0-byte folder marker
             is_folder_marker = raw_key.endswith('/')
 
             if is_folder_marker:
-                # If it's "testfolder/", split safely without creating an empty filename
+                # Safely split without creating an empty filename at the end
                 path_parts = [p for p in raw_key.split('/') if p]
                 filename = ""
             else:
@@ -189,7 +189,7 @@ class FileBrowserTree(QTreeWidget):
                     self.dir_cache[current_path] = new_folder
                     parent_node = new_folder
 
-            # [FIX] If this was purely an S3 folder marker, stop here!
+            # If this was purely an S3 folder marker, stop here.
             # Do not proceed to build a blank file node underneath it.
             if is_folder_marker:
                 continue

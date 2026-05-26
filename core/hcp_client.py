@@ -101,13 +101,8 @@ class HCPClient:
         Retrieves and formats a complete file hierarchy for the target bucket.
         
         Utilizes boto3's paginator to safely fetch large datasets without 
-        timeout or memory overflow.
-        
-        Args:
-            bucket_name: The S3 bucket to scan.
-            
-        Returns:
-            A list of tuples containing (raw_key, size_str, type, date, raw_key, raw_size).
+        timeout or memory overflow. Allows 0-byte folder markers through for 
+        accurate UI representation and deletion.
         """
         if not self.handler: 
             return []
@@ -115,7 +110,6 @@ class HCPClient:
         try:
             self._ensure_mount(bucket_name)
             
-            # Safely extract the underlying boto3 client from the NGPIris wrapper
             s3 = getattr(self.handler, 's3_client', getattr(self.handler, 'client', None))
             if not s3: 
                 return []
@@ -134,10 +128,9 @@ class HCPClient:
                     # Only filter out system metadata files, let folder markers through
                     if "Zone.Identifier" in raw_key: 
                         continue
-                    
+
                     raw_size = obj.get('Size', 0)
                     
-                    # Legacy string size formatting fallback
                     if raw_size > 1048576: 
                         s_str = f"{raw_size/1048576:.2f} MB"
                     elif raw_size > 1024: 
