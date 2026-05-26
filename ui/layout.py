@@ -74,9 +74,14 @@ class MainWindowLayout:
         action_layout = QHBoxLayout()
         window.btn_upload = QPushButton("Upload File...")
         window.btn_download = QPushButton("Download Selected")
+
+        window.btn_delete = QPushButton("Delete Selected")
+        window.btn_delete.setStyleSheet("background-color: #ffcccc; color: #cc0000; font-weight: bold;")
+        window.btn_delete.setVisible(False)
         
         action_layout.addWidget(window.btn_upload)
         action_layout.addWidget(window.btn_download)
+        action_layout.addWidget(window.btn_delete)
         window.layout.addLayout(action_layout)
 
         # 8. Status Bar & Embedded Progress Indicator
@@ -99,6 +104,10 @@ class MainWindowLayout:
         
         # Credentials linking action
         window.action_link = menu.addAction("Link Credentials File...")
+
+        # Add the About action
+        menu.addSeparator()
+        window.action_about = menu.addAction("About")
         
         # Application exit action
         window.action_exit = menu.addAction("Exit")

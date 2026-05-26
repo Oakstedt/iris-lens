@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         # 1. Window Configuration
-        self.setWindowTitle("Iris Lens v1.3 - A HCP browser by GM")
+        self.setWindowTitle("Iris Lens v1.4 - A HCP browser by GM")
         self.setMinimumSize(1100, 700)
         
         icon_path = os.path.join("assets", "icon.ico")
@@ -49,8 +49,10 @@ class MainWindow(QMainWindow):
         self.btn_read.clicked.connect(self.actions.read_bucket)
         self.btn_upload.clicked.connect(self.actions.upload)
         self.btn_download.clicked.connect(self.actions.download)
+        self.btn_delete.clicked.connect(self.actions.delete_selected)
         self.search_input.textChanged.connect(self.actions.search)
         self.action_link.triggered.connect(self.actions.link_credentials)
+        self.action_about.triggered.connect(self.actions.show_about)
 
 
 if __name__ == "__main__":

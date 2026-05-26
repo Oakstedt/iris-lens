@@ -178,3 +178,52 @@ class UploadWorker(QThread):
     def stop(self) -> None:
         """Safely flags the worker to halt operations."""
         self._is_running = False
+
+class DeleteWorker(QThread):
+    """
+    Background thread for deleting files via the HCPClient.
+    
+    Iterates through a list of file keys and emits progress updates.
+    """
+    finished = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+    progress_updated = pyqtSignal(int)
+
+    def __init__(self, client: Any, bucket: str, file_keys: List[str]) -> None:
+        """Initializes the worker with the active client and target keys."""
+        super().__init__()
+        self.client = client
+        self.bucket = bucket
+        self.file_keys = file_keys
+        
+        self._is_running = True
+        self.total_files = len(self.file_keys)
+
+    def run(self) -> None:
+        """Executes the S3 deletion queue."""
+        logger.info("Starting delete worker. Job size: %d files.", self.total_files)
+
+        try:
+            for index, key in enumerate(self.file_keys):
+                if not self._is_running: 
+                    break
+
+                # Execute the deletion
+                success = self.client.delete_object(self.bucket, key)
+                if not success:
+                    raise Exception(f"Server rejected deletion for: {key}")
+                
+                # Emit percentage based on file count
+                current_percent = int(((index + 1) / self.total_files) * 100)
+                self.progress_updated.emit(current_percent)
+
+            # Pass a simple empty string instead of a calculated duration
+            self.finished.emit("")
+
+        except Exception as e:
+            logger.error("Delete Worker crashed: %s", e)
+            self.error_occurred.emit(str(e))
+
+    def stop(self) -> None:
+        """Safely flags the worker to halt operations."""
+        self._is_running = False

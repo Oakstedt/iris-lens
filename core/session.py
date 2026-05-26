@@ -129,3 +129,16 @@ class SessionManager:
             The active HCPClient instance.
         """
         return self.client
+    
+    def delete_object(self, bucket: str, file_key: str) -> bool:
+        """
+        Routes a deletion request to the underlying client.
+        
+        Args:
+            bucket: The target S3 bucket name.
+            file_key: The exact key of the file to delete.
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        return self.client.delete_object(bucket, file_key)

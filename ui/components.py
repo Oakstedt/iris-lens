@@ -5,9 +5,16 @@ from PyQt6.QtWidgets import (
     QTreeWidget, 
     QTreeWidgetItem, 
     QHeaderView, 
-    QTreeWidgetItemIterator
+    QTreeWidgetItemIterator,
+    QDialog, 
+    QVBoxLayout, 
+    QLabel, 
+    QInputDialog, 
+    QLineEdit, 
+    QMessageBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+
 from PyQt6.QtGui import QPainter, QPixmap, QPaintEvent
 
 
@@ -141,9 +148,17 @@ class FileBrowserTree(QTreeWidget):
             else:
                 continue
 
-            parts = raw_key.split('/')
-            filename = parts[-1]
-            path_parts = parts[:-1]
+            # Identify if this item is a 0-byte folder marker
+            is_folder_marker = raw_key.endswith('/')
+
+            if is_folder_marker:
+                # Safely split without creating an empty filename at the end
+                path_parts = [p for p in raw_key.split('/') if p]
+                filename = ""
+            else:
+                parts = raw_key.split('/')
+                filename = parts[-1]
+                path_parts = parts[:-1]
             
             parent_node = self.invisibleRootItem()
             current_path = ""
@@ -160,6 +175,10 @@ class FileBrowserTree(QTreeWidget):
                     new_folder = FileTreeItem(parent_node)
                     new_folder.setText(0, folder)
                     new_folder.setText(2, "Folder")
+                    
+                    # Store the explicit S3 folder marker key
+                    new_folder.setData(0, Qt.ItemDataRole.UserRole, current_path + "/")
+                    
                     new_folder.setFlags(
                         Qt.ItemFlag.ItemIsUserCheckable | 
                         Qt.ItemFlag.ItemIsEnabled | 
@@ -169,6 +188,11 @@ class FileBrowserTree(QTreeWidget):
                     
                     self.dir_cache[current_path] = new_folder
                     parent_node = new_folder
+
+            # If this was purely an S3 folder marker, stop here.
+            # Do not proceed to build a blank file node underneath it.
+            if is_folder_marker:
+                continue
 
             # Construct file nodes using the custom FileTreeItem
             file_item = FileTreeItem(parent_node)
@@ -188,7 +212,6 @@ class FileBrowserTree(QTreeWidget):
             if path in self.dir_cache:
                 folder_item = self.dir_cache[path]
                 folder_item.setText(1, self.format_size(total_bytes))
-                # Store the raw bytes in the UserRole so folders can be numerically sorted too
                 folder_item.setData(1, Qt.ItemDataRole.UserRole, total_bytes)
 
         self.setSortingEnabled(True)
@@ -223,7 +246,8 @@ class FileBrowserTree(QTreeWidget):
             raw_key = item.data(0, Qt.ItemDataRole.UserRole)
             raw_size = item.data(1, Qt.ItemDataRole.UserRole)
             
-            if raw_key and raw_size is not None:
+            # [FIX] Explicitly ignore folder markers (keys ending with '/') for downloads
+            if raw_key and raw_size is not None and not str(raw_key).endswith('/'):
                 selected_files.append((raw_key, raw_size))
                 
             iterator += 1
@@ -255,3 +279,81 @@ class FileBrowserTree(QTreeWidget):
         root = self.invisibleRootItem()
         for i in range(root.childCount()):
             check_node(root.child(i))
+
+class AboutDialog(QDialog):
+    """
+    Displays application information and contains a hidden admin unlock mechanism.
+    
+    A user clicking the version label 5 times rapidly will trigger a password 
+    prompt. Successful entry emits the admin_unlocked signal.
+    """
+    
+    admin_unlocked = pyqtSignal()
+
+    def __init__(self, parent: Optional[Any] = None) -> None:
+        """Initializes the About dialog and the hidden click timer."""
+        super().__init__(parent)
+        self.setWindowTitle("About Iris Lens")
+        self.setFixedSize(300, 150)
+
+        self._click_count = 0
+        self._click_timer = QTimer(self)
+        self._click_timer.setInterval(2000)  # 2 seconds to complete 5 clicks
+        self._click_timer.timeout.connect(self._reset_clicks)
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        """Constructs the visual elements of the dialog."""
+        layout = QVBoxLayout(self)
+
+        title_label = QLabel("Iris Lens")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # The secret trigger label
+        self.version_label = QLabel("Version 1.4")
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version_label.mousePressEvent = self._on_version_clicked
+
+        author_label = QLabel("Developed by GM\nConnected to HCP S3")
+        author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(title_label)
+        layout.addWidget(self.version_label)
+        layout.addWidget(author_label)
+
+    def _on_version_clicked(self, event: Any) -> None:
+        """Handles the hidden click counter logic."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Start the timer on the very first click
+            if self._click_count == 0:
+                self._click_timer.start()
+
+            self._click_count += 1
+
+            # Trigger the prompt if the threshold is met
+            if self._click_count >= 5:
+                self._click_timer.stop()
+                self._prompt_admin_password()
+                self._reset_clicks()
+
+    def _reset_clicks(self) -> None:
+        """Resets the hidden click counter and stops the timer."""
+        self._click_count = 0
+        self._click_timer.stop()
+
+    def _prompt_admin_password(self) -> None:
+        """Triggers the password dialog upon successful click sequence."""
+        password, ok = QInputDialog.getText(
+            self, 
+            "Admin Access", 
+            "Enter Override Passphrase:", 
+            QLineEdit.EchoMode.Password
+        )
+
+        if ok and password == "510715": 
+            self.admin_unlocked.emit()
+            self.accept()  # Close the about dialog on success
+        elif ok:
+            QMessageBox.warning(self, "Access Denied", "Incorrect passphrase.")
