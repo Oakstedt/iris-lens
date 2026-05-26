@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         # 1. Window Configuration
-        self.setWindowTitle("Iris Lens v1.3 - A HCP browser by GM")
+        self.setWindowTitle("Iris Lens v1.4 - A HCP browser by GM")
         self.setMinimumSize(1100, 700)
         
         icon_path = os.path.join("assets", "icon.ico")
