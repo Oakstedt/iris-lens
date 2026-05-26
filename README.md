@@ -1,6 +1,6 @@
 Welcome! 
 
-This is Iris-Lens, a visual alternative to Iris in regards to browsing, uploading and downloading files on a HCP-buckets.
+This is Iris-Lens, a visual alternative to Iris in regards to browsing, uploading and downloading files on HCP.
 
 To test check out the release section.
 https://github.com/Oakstedt/iris-lens/releases
