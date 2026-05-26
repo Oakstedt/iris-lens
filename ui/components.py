@@ -312,7 +312,7 @@ class AboutDialog(QDialog):
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # The secret trigger label
-        self.version_label = QLabel("Version 1.3")
+        self.version_label = QLabel("Version 1.4")
         self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version_label.mousePressEvent = self._on_version_clicked
 
